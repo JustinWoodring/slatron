@@ -1,0 +1,7 @@
+node_name = "studio-a"
+server_url = "ws://127.0.0.1:8080/ws"
+secret_key = "your-secret-key-from-server"
+heartbeat_interval_secs = 5
+schedule_poll_interval_secs = 60
+mpv_socket_path = "/tmp/mpv-socket"
+offline_mode_warning_hours = 24

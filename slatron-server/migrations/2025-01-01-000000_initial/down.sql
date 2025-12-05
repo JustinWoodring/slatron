@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS permissions;
+DROP TABLE IF EXISTS node_schedules;
+DROP TABLE IF EXISTS schedule_blocks;
+DROP TABLE IF EXISTS content_items;
+DROP TABLE IF EXISTS scripts;
+DROP TABLE IF EXISTS schedules;
+DROP TABLE IF EXISTS nodes;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS global_settings;
