@@ -65,6 +65,9 @@ fn main() {
 
         for entry in walk_dir.into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
+            if path == dist_dir {
+                continue;
+            }
             let name = path.strip_prefix(&dist_dir).unwrap();
             let name_str = name.to_str().unwrap();
 

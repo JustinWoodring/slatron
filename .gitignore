@@ -24,6 +24,7 @@ yarn-error.log*
 .env.local
 .env.*.local
 *.local.toml
+embedded_ui/
 
 # IDE
 .vscode/
