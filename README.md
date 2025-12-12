@@ -4,6 +4,9 @@
 
 Slatron allows you to manage content, schedule broadcasts, and control playback nodes across your network from a centralized, web-based dashboard. It's built for reliability using Rust and modern web technologies.
 
+<img width="1460" height="1017" alt="image" src="https://github.com/user-attachments/assets/8ff8ed0e-2c4f-41bc-a05b-94cc5d04ec15" />
+
+
 ---
 
 ## 🌟 Key Features
