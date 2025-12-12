@@ -1,12 +1,12 @@
+use crate::models::{NewScript, Script, User};
+use crate::AppState;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    Json,
+    Extension, Json,
 };
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
-use crate::models::{NewScript, Script};
-use crate::AppState;
 
 #[derive(Serialize)]
 pub struct ValidateScriptResponse {
@@ -14,12 +14,13 @@ pub struct ValidateScriptResponse {
     pub errors: Vec<String>,
 }
 
-pub async fn list_scripts(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<Script>>, StatusCode> {
+pub async fn list_scripts(State(state): State<AppState>) -> Result<Json<Vec<Script>>, StatusCode> {
     use crate::schema::scripts::dsl::*;
 
-    let mut conn = state.db.get().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut conn = state
+        .db
+        .get()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let results = scripts
         .select(Script::as_select())
@@ -31,15 +32,26 @@ pub async fn list_scripts(
 
 pub async fn create_script(
     State(state): State<AppState>,
+    Extension(user): Extension<User>,
     Json(new_script): Json<NewScript>,
 ) -> Result<Json<Script>, StatusCode> {
+    if !user.is_editor() {
+        return Err(StatusCode::FORBIDDEN);
+    }
     use crate::schema::scripts;
 
-    let mut conn = state.db.get().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut conn = state
+        .db
+        .get()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if new_script.script_type != "transformer" && new_script.script_type != "content_loader" {
+        return Err(StatusCode::BAD_REQUEST);
+    }
 
     let script = diesel::insert_into(scripts::table)
         .values(&new_script)
-        .returning(Script::as_returning())
+        .returning(Script::as_select())
         .get_result(&mut conn)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -48,14 +60,25 @@ pub async fn create_script(
 
 pub async fn update_script(
     State(state): State<AppState>,
+    Extension(user): Extension<User>,
     Path(script_id): Path<i32>,
     Json(updates): Json<NewScript>,
 ) -> Result<Json<Script>, StatusCode> {
+    if !user.is_editor() {
+        return Err(StatusCode::FORBIDDEN);
+    }
     use crate::schema::scripts::dsl::*;
 
-    let mut conn = state.db.get().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut conn = state
+        .db
+        .get()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let script = diesel::update(scripts.find(script_id))
+    if updates.script_type != "transformer" && updates.script_type != "content_loader" {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let script = diesel::update(scripts.filter(id.eq(script_id)))
         .set((
             name.eq(updates.name),
             description.eq(updates.description),
@@ -63,7 +86,7 @@ pub async fn update_script(
             script_content.eq(updates.script_content),
             parameters_schema.eq(updates.parameters_schema),
         ))
-        .returning(Script::as_returning())
+        .returning(Script::as_select())
         .get_result(&mut conn)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -72,13 +95,20 @@ pub async fn update_script(
 
 pub async fn delete_script(
     State(state): State<AppState>,
+    Extension(user): Extension<User>,
     Path(script_id): Path<i32>,
 ) -> Result<StatusCode, StatusCode> {
+    if !user.is_editor() {
+        return Err(StatusCode::FORBIDDEN);
+    }
     use crate::schema::scripts::dsl::*;
 
-    let mut conn = state.db.get().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut conn = state
+        .db
+        .get()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    diesel::delete(scripts.find(script_id))
+    diesel::delete(scripts.filter(id.eq(script_id)))
         .execute(&mut conn)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -93,9 +123,13 @@ pub struct ValidateScriptRequest {
 
 pub async fn validate_script(
     State(_state): State<AppState>,
+    Extension(user): Extension<User>,
     Path(_script_id): Path<i32>,
     Json(req): Json<ValidateScriptRequest>,
 ) -> Result<Json<ValidateScriptResponse>, StatusCode> {
+    if !user.is_editor() {
+        return Err(StatusCode::FORBIDDEN);
+    }
     use crate::rhai_engine;
 
     let errors = rhai_engine::validate_script(&req.script_content, &req.script_type);
@@ -104,4 +138,80 @@ pub async fn validate_script(
         valid: errors.is_empty(),
         errors,
     }))
+}
+
+#[derive(Deserialize)]
+pub struct ExecuteScriptRequest {
+    pub params: serde_json::Value, // Dynamic JSON params
+}
+
+#[derive(Serialize)]
+pub struct ExecuteScriptResponse {
+    pub success: bool,
+    pub result: Option<String>,
+    pub mpv_commands: Vec<String>,
+    pub error: Option<String>,
+}
+
+pub async fn execute_script(
+    State(state): State<AppState>,
+    Extension(user): Extension<User>,
+    Path(script_id): Path<i32>,
+    Json(req): Json<ExecuteScriptRequest>,
+) -> Result<Json<ExecuteScriptResponse>, StatusCode> {
+    if !user.is_editor() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    use crate::rhai_engine;
+    use crate::schema::global_settings::dsl::global_settings;
+    use crate::schema::scripts::dsl::*;
+
+    let mut conn = state
+        .db
+        .get()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let script = scripts
+        .filter(id.eq(script_id))
+        .select(Script::as_select())
+        .first(&mut conn)
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    // Fetch Global Settings
+    let settings_list = global_settings
+        .load::<crate::models::GlobalSetting>(&mut conn)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut settings_map = std::collections::HashMap::new();
+    for s in settings_list {
+        settings_map.insert(s.key, s.value);
+    }
+
+    // Convert serde_json::Value to rhai::Map
+    let mut rhai_params = rhai::Map::new();
+    if let serde_json::Value::Object(map) = req.params {
+        for (k, v) in map {
+            rhai_params.insert(k.into(), rhai::serde::to_dynamic(v).unwrap_or_default());
+        }
+    }
+
+    match rhai_engine::execute_script(
+        &script.script_content,
+        &script.script_type,
+        rhai_params,
+        settings_map,
+    ) {
+        Ok((result, commands)) => Ok(Json(ExecuteScriptResponse {
+            success: true,
+            result: Some(result.to_string()),
+            mpv_commands: commands,
+            error: None,
+        })),
+        Err(e) => Ok(Json(ExecuteScriptResponse {
+            success: false,
+            result: None,
+            mpv_commands: vec![],
+            error: Some(e),
+        })),
+    }
 }

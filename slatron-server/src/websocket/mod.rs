@@ -1,3 +1,4 @@
+use crate::AppState;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -9,17 +10,20 @@ use chrono::Utc;
 use diesel::prelude::*;
 use futures::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::collections::HashMap;
-use crate::AppState;
+// use std::collections::HashMap;
+// use std::sync::Arc;
+// use tokio::sync::RwLock;
 
 // Server → Node messages
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ServerMessage {
     #[serde(rename = "auth_response")]
-    AuthResponse { success: bool, message: String },
+    AuthResponse {
+        success: bool,
+        message: String,
+        node_id: Option<i32>,
+    },
     #[serde(rename = "schedule_updated")]
     ScheduleUpdated { timestamp: String },
     #[serde(rename = "command")]
@@ -27,6 +31,8 @@ pub enum ServerMessage {
     #[serde(rename = "heartbeat_ack")]
     HeartbeatAck,
 }
+
+// ...
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "action")]
@@ -36,8 +42,6 @@ pub enum NodeCommand {
     #[serde(rename = "pause")]
     Pause,
     #[serde(rename = "stop")]
-    Stop,
-    #[serde(rename = "seek")]
     Seek { position_secs: f64 },
     #[serde(rename = "load_content")]
     LoadContent { content_id: i32 },
@@ -59,7 +63,7 @@ pub enum NodeMessage {
     #[serde(rename = "heartbeat")]
     Heartbeat {
         current_content_id: Option<i32>,
-        playback_position_secs: Option<f64>,
+        playback_position_secs: Option<f32>,
         status: String,
         cpu_usage_percent: f64,
         memory_usage_mb: f64,
@@ -71,15 +75,16 @@ pub enum NodeMessage {
     ReportPaths { available_paths: Vec<String> },
     #[serde(rename = "content_error")]
     ContentError { content_id: i32, error: String },
+    #[serde(rename = "log")]
+    Log {
+        level: String,
+        message: String,
+        target: String,
+        timestamp: String,
+    },
 }
 
-// Global state for connected nodes
-pub type ConnectedNodes = Arc<RwLock<HashMap<i32, tokio::sync::mpsc::UnboundedSender<ServerMessage>>>>;
-
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
+pub async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
@@ -89,6 +94,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     let mut node_id: Option<i32> = None;
     let mut authenticated = false;
+
+    // Clone state for use in the async blocks
+    let state_clone = state.clone();
 
     // Spawn a task to forward messages from the channel to the WebSocket
     let mut send_task = tokio::spawn(async move {
@@ -112,11 +120,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             secret_key,
                         } => {
                             // Authenticate node
-                            let auth_result = authenticate_node(
-                                &state,
-                                &node_name,
-                                &secret_key,
-                            ).await;
+                            let auth_result =
+                                authenticate_node(&state_clone, &node_name, &secret_key).await;
 
                             match auth_result {
                                 Ok(id) => {
@@ -126,6 +131,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     let _ = tx.send(ServerMessage::AuthResponse {
                                         success: true,
                                         message: "Authenticated successfully".to_string(),
+                                        node_id: Some(id),
                                     });
 
                                     tracing::info!("Node {} authenticated", node_name);
@@ -134,6 +140,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     let _ = tx.send(ServerMessage::AuthResponse {
                                         success: false,
                                         message: e,
+                                        node_id: None,
                                     });
                                 }
                             }
@@ -144,28 +151,32 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             status,
                             cpu_usage_percent,
                             memory_usage_mb,
-                            errors,
+                            errors: _,
                         } => {
                             if authenticated {
                                 if let Some(id) = node_id {
-                                    let _ = update_node_status(
-                                        &state,
+                                    if let Err(e) = update_node_status(
+                                        &state_clone,
                                         id,
                                         &status,
                                         current_content_id,
                                         playback_position_secs,
                                     )
-                                    .await;
+                                    .await
+                                    {
+                                        tracing::error!("Failed to update node status: {}", e);
+                                    }
 
                                     let _ = tx.send(ServerMessage::HeartbeatAck);
 
                                     tracing::debug!(
-                                        "Node {} heartbeat: status={}, cpu={:.1}%, mem={:.1}MB, errors={}",
+                                        "Node {} heartbeat: status={}, content={:?}, pos={:?}, cpu={:.1}%, mem={:.1}MB",
                                         id,
                                         status,
+                                        current_content_id,
+                                        playback_position_secs,
                                         cpu_usage_percent,
-                                        memory_usage_mb,
-                                        errors.len()
+                                        memory_usage_mb
                                     );
                                 }
                             }
@@ -181,7 +192,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         NodeMessage::ReportPaths { available_paths } => {
                             if authenticated {
                                 if let Some(id) = node_id {
-                                    let _ = update_node_paths(&state, id, &available_paths).await;
+                                    let _ =
+                                        update_node_paths(&state_clone, id, &available_paths).await;
                                 }
                             }
                         }
@@ -193,6 +205,28 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     content_id,
                                     error
                                 );
+                            }
+                        }
+                        NodeMessage::Log {
+                            level,
+                            message,
+                            target,
+                            timestamp,
+                        } => {
+                            if authenticated {
+                                if let Some(id) = node_id {
+                                    let mut logs = state_clone.node_logs.write().await;
+                                    let queue = logs.entry(id).or_default();
+                                    if queue.len() >= 100 {
+                                        queue.pop_front();
+                                    }
+                                    queue.push_back(crate::models::LogEntry {
+                                        level,
+                                        message,
+                                        target,
+                                        timestamp,
+                                    });
+                                }
                             }
                         }
                     }
@@ -238,7 +272,7 @@ async fn authenticate_node(
         .map_err(|_| "Invalid credentials".to_string())?;
 
     // Update node status to online
-    diesel::update(dsl::nodes.find(node.id))
+    diesel::update(dsl::nodes.filter(dsl::id.eq(node.id.expect("Node ID missing"))))
         .set((
             dsl::status.eq("online"),
             dsl::last_heartbeat.eq(Utc::now().naive_utc()),
@@ -246,15 +280,15 @@ async fn authenticate_node(
         .execute(&mut conn)
         .map_err(|_| "Failed to update node status".to_string())?;
 
-    Ok(node.id)
+    Ok(node.id.expect("Node ID missing"))
 }
 
 async fn update_node_status(
     state: &AppState,
     node_id: i32,
     status: &str,
-    _current_content_id: Option<i32>,
-    _playback_position_secs: Option<f64>,
+    current_content_id: Option<i32>,
+    playback_position_secs: Option<f32>,
 ) -> Result<(), String> {
     use crate::schema::nodes::dsl;
 
@@ -263,22 +297,20 @@ async fn update_node_status(
         .get()
         .map_err(|_| "Database connection error".to_string())?;
 
-    diesel::update(dsl::nodes.find(node_id))
+    diesel::update(dsl::nodes.filter(dsl::id.eq(node_id)))
         .set((
             dsl::status.eq(status),
             dsl::last_heartbeat.eq(Utc::now().naive_utc()),
+            dsl::current_content_id.eq(current_content_id),
+            dsl::playback_position_secs.eq(playback_position_secs),
         ))
         .execute(&mut conn)
-        .map_err(|_| "Failed to update node status".to_string())?;
+        .map_err(|e| format!("Failed to update node status: {}", e))?;
 
     Ok(())
 }
 
-async fn update_node_paths(
-    state: &AppState,
-    node_id: i32,
-    paths: &[String],
-) -> Result<(), String> {
+async fn update_node_paths(state: &AppState, node_id: i32, paths: &[String]) -> Result<(), String> {
     use crate::schema::nodes::dsl;
 
     let mut conn = state
@@ -286,10 +318,10 @@ async fn update_node_paths(
         .get()
         .map_err(|_| "Database connection error".to_string())?;
 
-    let paths_json = serde_json::to_string(paths)
-        .map_err(|_| "Failed to serialize paths".to_string())?;
+    let paths_json =
+        serde_json::to_string(paths).map_err(|_| "Failed to serialize paths".to_string())?;
 
-    diesel::update(dsl::nodes.find(node_id))
+    diesel::update(dsl::nodes.filter(dsl::id.eq(node_id)))
         .set(dsl::available_paths.eq(paths_json))
         .execute(&mut conn)
         .map_err(|_| "Failed to update node paths".to_string())?;
@@ -305,7 +337,7 @@ async fn mark_node_offline(state: &AppState, node_id: i32) -> Result<(), String>
         .get()
         .map_err(|_| "Database connection error".to_string())?;
 
-    diesel::update(dsl::nodes.find(node_id))
+    diesel::update(dsl::nodes.filter(dsl::id.eq(node_id)))
         .set(dsl::status.eq("offline"))
         .execute(&mut conn)
         .map_err(|_| "Failed to mark node offline".to_string())?;

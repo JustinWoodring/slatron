@@ -1,0 +1,2 @@
+-- SQLite does not support dropping columns easily in older versions, and we generally move forward.
+-- If needed, we would recreate the table.

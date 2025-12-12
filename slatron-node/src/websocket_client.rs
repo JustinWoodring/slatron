@@ -13,7 +13,11 @@ use crate::NodeState;
 #[serde(tag = "type")]
 pub enum ServerMessage {
     #[serde(rename = "auth_response")]
-    AuthResponse { success: bool, message: String },
+    AuthResponse {
+        success: bool,
+        message: String,
+        node_id: Option<i32>,
+    },
     #[serde(rename = "schedule_updated")]
     ScheduleUpdated { timestamp: String },
     #[serde(rename = "command")]
@@ -53,7 +57,7 @@ pub enum NodeMessage {
     #[serde(rename = "heartbeat")]
     Heartbeat {
         current_content_id: Option<i32>,
-        playback_position_secs: Option<f64>,
+        playback_position_secs: Option<f32>,
         status: String,
         cpu_usage_percent: f64,
         memory_usage_mb: f64,
@@ -65,6 +69,13 @@ pub enum NodeMessage {
     ReportPaths { available_paths: Vec<String> },
     #[serde(rename = "content_error")]
     ContentError { content_id: i32, error: String },
+    #[serde(rename = "log")]
+    Log {
+        level: String,
+        message: String,
+        target: String,
+        timestamp: String,
+    },
 }
 
 pub struct WebSocketClient {
@@ -116,37 +127,47 @@ impl WebSocketClient {
 
         // Wait for auth response
         if let Some(Ok(Message::Text(text))) = read.next().await {
-            if let Ok(ServerMessage::AuthResponse { success, message }) =
-                serde_json::from_str(&text)
+            if let Ok(ServerMessage::AuthResponse {
+                success,
+                message,
+                node_id,
+            }) = serde_json::from_str(&text)
             {
                 if !success {
                     tracing::error!("Authentication failed: {}", message);
                     return Err(anyhow::anyhow!("Authentication failed"));
                 }
-                tracing::info!("Authenticated successfully");
+
+                if let Some(id) = node_id {
+                    *self.state.node_id.write().await = Some(id);
+                    tracing::info!("Authenticated successfully as Node ID: {}", id);
+                } else {
+                    tracing::warn!("Authenticated but no Node ID received");
+                }
             }
         }
 
-        // Start heartbeat task
-        let heartbeat_tx = {
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<NodeMessage>();
-            let mut write_clone = write.clone();
+        // Create channels for sending messages
+        let (msg_tx, mut msg_rx) = tokio::sync::mpsc::unbounded_channel::<NodeMessage>();
 
-            tokio::spawn(async move {
-                while let Some(msg) = rx.recv().await {
-                    if let Ok(json) = serde_json::to_string(&msg) {
-                        let _ = write_clone.send(Message::Text(json)).await;
+        // Set global log sender
+        if let Ok(mut sender_guard) = self.state.log_sender.lock() {
+            *sender_guard = Some(msg_tx.clone());
+        }
+
+        // Spawn write task
+        let write_task = tokio::spawn(async move {
+            while let Some(msg) = msg_rx.recv().await {
+                if let Ok(json) = serde_json::to_string(&msg) {
+                    if write.send(Message::Text(json)).await.is_err() {
+                        break;
                     }
                 }
-            });
+            }
+        });
 
-            tx
-        };
-
-        let heartbeat_manager = HeartbeatManager::new(
-            self.state.clone(),
-            heartbeat_tx,
-        );
+        // Start heartbeat task
+        let heartbeat_manager = HeartbeatManager::new(self.state.clone(), msg_tx.clone());
 
         tokio::spawn(async move {
             heartbeat_manager.start().await;
@@ -172,13 +193,26 @@ impl WebSocketClient {
             }
         }
 
+        // Clean up
+        drop(msg_tx);
+        let _ = write_task.await;
+
         Ok(())
     }
 
     async fn handle_server_message(&self, msg: ServerMessage) -> Result<()> {
         match msg {
-            ServerMessage::AuthResponse { success, message } => {
+            ServerMessage::AuthResponse {
+                success,
+                message,
+                node_id,
+            } => {
                 tracing::info!("Auth response: {} - {}", success, message);
+                if success {
+                    if let Some(id) = node_id {
+                        *self.state.node_id.write().await = Some(id);
+                    }
+                }
             }
             ServerMessage::ScheduleUpdated { timestamp } => {
                 tracing::info!("Schedule updated at {}", timestamp);
@@ -199,31 +233,49 @@ impl WebSocketClient {
     async fn handle_command(&self, command: NodeCommand) -> Result<()> {
         match command {
             NodeCommand::Play => {
-                tracing::info!("Command: Play");
-                // TODO: Send play command to MPV
+                tracing::info!("Command: Play (Resume)");
+                if let Err(e) = self.state.mpv.resume() {
+                    tracing::error!("Failed to resume playback: {}", e);
+                }
             }
             NodeCommand::Pause => {
                 tracing::info!("Command: Pause");
-                // TODO: Send pause command to MPV
+                if let Err(e) = self.state.mpv.pause() {
+                    tracing::error!("Failed to pause playback: {}", e);
+                }
             }
             NodeCommand::Stop => {
                 tracing::info!("Command: Stop");
-                // TODO: Send stop command to MPV
+                if let Err(e) = self.state.mpv.stop() {
+                    tracing::error!("Failed to stop playback: {}", e);
+                }
             }
             NodeCommand::Seek { position_secs } => {
                 tracing::info!("Command: Seek to {}", position_secs);
-                // TODO: Send seek command to MPV
+                if let Err(e) = self.state.mpv.seek(position_secs) {
+                    tracing::error!("Failed to seek: {}", e);
+                }
             }
             NodeCommand::LoadContent { content_id } => {
-                tracing::info!("Command: Load content {}", content_id);
-                // TODO: Load content from schedule cache
+                tracing::info!("Command: Load content {} (Not implemented)", content_id);
+                // Requires content path resolution
             }
             NodeCommand::ReloadSchedule => {
                 tracing::info!("Command: Reload schedule");
-                // TODO: Reload schedule from server
+                // Polling loop will pick it up
             }
             NodeCommand::Shutdown => {
                 tracing::info!("Command: Shutdown");
+
+                // Kill MPV process if managed
+                if let Ok(mut child_lock) = self.state.mpv_process.lock() {
+                    if let Some(child) = child_lock.as_mut() {
+                        tracing::info!("Killing MPV process...");
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                }
+
                 std::process::exit(0);
             }
         }

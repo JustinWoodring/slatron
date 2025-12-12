@@ -1,9 +1,8 @@
 pub mod jwt;
 pub mod middleware;
 
-use crate::models::User;
-use crate::schema::users;
 use crate::db::DbConnection;
+use crate::models::User;
 use anyhow::Result;
 use bcrypt::{hash, verify, DEFAULT_COST};
 use diesel::prelude::*;
@@ -36,15 +35,12 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
     Ok(verify(password, hash)?)
 }
 
-pub fn authenticate_user(
-    conn: &mut DbConnection,
-    username: &str,
-    password: &str,
-) -> Result<User> {
+pub fn authenticate_user(conn: &mut DbConnection, username: &str, password: &str) -> Result<User> {
     use crate::schema::users::dsl;
 
     let user = dsl::users
         .filter(dsl::username.eq(username))
+        .select(User::as_select())
         .first::<User>(conn)?;
 
     if verify_password(password, &user.password_hash)? {

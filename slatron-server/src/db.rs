@@ -1,5 +1,4 @@
 use anyhow::Result;
-use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::sqlite::SqliteConnection;
 
@@ -13,7 +12,7 @@ pub fn create_pool(database_url: &str) -> Result<DbPool> {
     Ok(pool)
 }
 
-pub fn run_migrations(conn: &mut SqliteConnection) -> Result<()> {
+pub fn run_migrations(conn: &mut DbConnection) -> Result<()> {
     use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 
     const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");

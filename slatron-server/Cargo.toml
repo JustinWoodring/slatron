@@ -2,18 +2,21 @@
 name = "slatron-server"
 version = "0.1.0"
 edition = "2021"
+authors = ["SLATRON AUTHORS"]
+license = "AGPL-3.0-only"
+description = "Slatron Server - Distributed TV Scheduling System"
 
 [dependencies]
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
-diesel = { version = "2.1", features = ["sqlite", "r2d2", "chrono"] }
+diesel = { version = "2.1", features = ["sqlite", "r2d2", "chrono", "returning_clauses_for_sqlite_3_35"] }
 diesel_migrations = "2.1"
 tokio-tungstenite = "0.21"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 jsonwebtoken = "9.2"
 bcrypt = "0.15"
-rhai = "1.16"
+rhai = { version = "1.16", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "cors"] }
@@ -24,6 +27,19 @@ uuid = { version = "1.6", features = ["v4"] }
 toml = "0.8"
 anyhow = "1.0"
 thiserror = "1.0"
+chrono-tz = "0.10.4"
+argon2 = "0.5.3"
+rand_core = "0.9.3"
+clap = { version = "4.5", features = ["derive"] }
+axum-server = { version = "0.7.1", features = ["tls-rustls"] }
+zip = "0.6"
+
+[build-dependencies]
+zip = "0.6"
+walkdir = "2"
+
+[features]
+embed-ui = []
 
 [dev-dependencies]
 reqwest = "0.11"

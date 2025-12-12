@@ -2,13 +2,16 @@
 name = "slatron-node"
 version = "0.1.0"
 edition = "2021"
+authors = ["Justin Woodring", "SLATRON AUTHORS"]
+license = "AGPL-3.0-only"
+description = "Slatron Node - Playback Client"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.21"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-rhai = "1.16"
+rhai = { version = "1.16", features = ["serde"] }
 sysinfo = "0.30"
 futures = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
@@ -16,3 +19,5 @@ toml = "0.8"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.12.25", features = ["json"] }
+clap = { version = "4.5.53", features = ["derive"] }

@@ -2,7 +2,7 @@
 
 diesel::table! {
     content_items (id) {
-        id -> Integer,
+        id -> Nullable<Integer>,
         title -> Text,
         description -> Nullable<Text>,
         content_type -> Text,
@@ -13,12 +13,13 @@ diesel::table! {
         node_accessibility -> Nullable<Text>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        transformer_scripts -> Nullable<Text>,
     }
 }
 
 diesel::table! {
     global_settings (id) {
-        id -> Integer,
+        id -> Nullable<Integer>,
         key -> Text,
         value -> Text,
         description -> Nullable<Text>,
@@ -28,16 +29,17 @@ diesel::table! {
 
 diesel::table! {
     node_schedules (id) {
-        id -> Integer,
+        id -> Nullable<Integer>,
         node_id -> Integer,
         schedule_id -> Integer,
         created_at -> Timestamp,
+        priority -> Nullable<Integer>,
     }
 }
 
 diesel::table! {
     nodes (id) {
-        id -> Integer,
+        id -> Nullable<Integer>,
         name -> Text,
         secret_key -> Text,
         ip_address -> Nullable<Text>,
@@ -46,12 +48,14 @@ diesel::table! {
         available_paths -> Nullable<Text>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        current_content_id -> Nullable<Integer>,
+        playback_position_secs -> Nullable<Float>,
     }
 }
 
 diesel::table! {
     permissions (id) {
-        id -> Integer,
+        id -> Nullable<Integer>,
         user_id -> Integer,
         resource_type -> Text,
         resource_id -> Integer,
@@ -62,7 +66,7 @@ diesel::table! {
 
 diesel::table! {
     schedule_blocks (id) {
-        id -> Integer,
+        id -> Nullable<Integer>,
         schedule_id -> Integer,
         content_id -> Nullable<Integer>,
         day_of_week -> Nullable<Integer>,
@@ -77,7 +81,7 @@ diesel::table! {
 
 diesel::table! {
     schedules (id) {
-        id -> Integer,
+        id -> Nullable<Integer>,
         name -> Text,
         description -> Nullable<Text>,
         schedule_type -> Text,
@@ -90,7 +94,7 @@ diesel::table! {
 
 diesel::table! {
     scripts (id) {
-        id -> Integer,
+        id -> Nullable<Integer>,
         name -> Text,
         description -> Nullable<Text>,
         script_type -> Text,
@@ -104,7 +108,7 @@ diesel::table! {
 
 diesel::table! {
     users (id) {
-        id -> Integer,
+        id -> Nullable<Integer>,
         username -> Text,
         password_hash -> Text,
         role -> Text,
@@ -116,6 +120,7 @@ diesel::table! {
 diesel::joinable!(content_items -> scripts (adapter_id));
 diesel::joinable!(node_schedules -> nodes (node_id));
 diesel::joinable!(node_schedules -> schedules (schedule_id));
+diesel::joinable!(nodes -> content_items (current_content_id));
 diesel::joinable!(permissions -> users (user_id));
 diesel::joinable!(schedule_blocks -> content_items (content_id));
 diesel::joinable!(schedule_blocks -> schedules (schedule_id));

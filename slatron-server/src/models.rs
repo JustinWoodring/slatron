@@ -5,14 +5,25 @@ use serde::{Deserialize, Serialize};
 // User models
 #[derive(Debug, Clone, Queryable, Selectable, Serialize)]
 #[diesel(table_name = crate::schema::users)]
+
 pub struct User {
-    pub id: i32,
+    pub id: Option<i32>,
     pub username: String,
     #[serde(skip_serializing)]
     pub password_hash: String,
     pub role: String,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+}
+
+impl User {
+    pub fn is_admin(&self) -> bool {
+        self.role == "admin"
+    }
+
+    pub fn is_editor(&self) -> bool {
+        self.role == "editor" || self.role == "admin"
+    }
 }
 
 #[derive(Debug, Insertable, Deserialize)]
@@ -26,17 +37,78 @@ pub struct NewUser {
 // Node models
 #[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
 #[diesel(table_name = crate::schema::nodes)]
+
 pub struct Node {
-    pub id: i32,
+    pub id: Option<i32>,
     pub name: String,
     #[serde(skip_serializing)]
+    #[allow(dead_code)]
     pub secret_key: String,
     pub ip_address: Option<String>,
     pub status: String,
+    #[serde(with = "ts_seconds_option")]
     pub last_heartbeat: Option<NaiveDateTime>,
     pub available_paths: Option<String>,
+    #[serde(with = "ts_seconds")]
     pub created_at: NaiveDateTime,
+    #[serde(with = "ts_seconds")]
     pub updated_at: NaiveDateTime,
+    pub current_content_id: Option<i32>,
+    pub playback_position_secs: Option<f32>,
+}
+
+mod ts_seconds {
+    use chrono::{DateTime, NaiveDateTime, Utc};
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(date: &NaiveDateTime, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let dt = DateTime::<Utc>::from_naive_utc_and_offset(*date, Utc);
+        serializer.serialize_str(&dt.to_rfc3339())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<NaiveDateTime, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let dt = DateTime::parse_from_rfc3339(&s).map_err(serde::de::Error::custom)?;
+        Ok(dt.with_timezone(&Utc).naive_utc())
+    }
+}
+
+mod ts_seconds_option {
+    use chrono::{DateTime, NaiveDateTime, Utc};
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(date: &Option<NaiveDateTime>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match date {
+            Some(d) => {
+                let dt = DateTime::<Utc>::from_naive_utc_and_offset(*d, Utc);
+                serializer.serialize_str(&dt.to_rfc3339())
+            }
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<NaiveDateTime>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Option<String> = Option::deserialize(deserializer)?;
+        match s {
+            Some(s) => {
+                let dt = DateTime::parse_from_rfc3339(&s).map_err(serde::de::Error::custom)?;
+                Ok(Some(dt.with_timezone(&Utc).naive_utc()))
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 #[derive(Debug, Insertable, Deserialize)]
@@ -51,8 +123,9 @@ pub struct NewNode {
 // Schedule models
 #[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
 #[diesel(table_name = crate::schema::schedules)]
+
 pub struct Schedule {
-    pub id: i32,
+    pub id: Option<i32>,
     pub name: String,
     pub description: Option<String>,
     pub schedule_type: String,
@@ -75,8 +148,9 @@ pub struct NewSchedule {
 // Schedule Block models
 #[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
 #[diesel(table_name = crate::schema::schedule_blocks)]
+
 pub struct ScheduleBlock {
-    pub id: i32,
+    pub id: Option<i32>,
     pub schedule_id: i32,
     pub content_id: Option<i32>,
     pub day_of_week: Option<i32>,
@@ -86,6 +160,14 @@ pub struct ScheduleBlock {
     pub script_id: Option<i32>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub level: String,
+    pub message: String,
+    pub target: String,
+    pub timestamp: String,
 }
 
 #[derive(Debug, Insertable, Deserialize)]
@@ -103,8 +185,9 @@ pub struct NewScheduleBlock {
 // Content Item models
 #[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
 #[diesel(table_name = crate::schema::content_items)]
+
 pub struct ContentItem {
-    pub id: i32,
+    pub id: Option<i32>,
     pub title: String,
     pub description: Option<String>,
     pub content_type: String,
@@ -115,6 +198,7 @@ pub struct ContentItem {
     pub node_accessibility: Option<String>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub transformer_scripts: Option<String>,
 }
 
 #[derive(Debug, Insertable, Deserialize)]
@@ -128,13 +212,15 @@ pub struct NewContentItem {
     pub duration_minutes: Option<i32>,
     pub tags: Option<String>,
     pub node_accessibility: Option<String>,
+    pub transformer_scripts: Option<String>,
 }
 
 // Script models
 #[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
 #[diesel(table_name = crate::schema::scripts)]
+
 pub struct Script {
-    pub id: i32,
+    pub id: Option<i32>,
     pub name: String,
     pub description: Option<String>,
     pub script_type: String,
@@ -157,13 +243,14 @@ pub struct NewScript {
 }
 
 // Node Schedule Assignment models
-#[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
+#[allow(dead_code)]
+#[derive(Debug, Queryable, Selectable, Insertable, Serialize, Deserialize)]
 #[diesel(table_name = crate::schema::node_schedules)]
+
 pub struct NodeSchedule {
-    pub id: i32,
     pub node_id: i32,
     pub schedule_id: i32,
-    pub created_at: NaiveDateTime,
+    pub priority: Option<i32>,
 }
 
 #[derive(Debug, Insertable, Deserialize)]
@@ -171,13 +258,15 @@ pub struct NodeSchedule {
 pub struct NewNodeSchedule {
     pub node_id: i32,
     pub schedule_id: i32,
+    pub priority: Option<i32>,
 }
 
 // Permission models
 #[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
 #[diesel(table_name = crate::schema::permissions)]
+
 pub struct Permission {
-    pub id: i32,
+    pub id: Option<i32>,
     pub user_id: i32,
     pub resource_type: String,
     pub resource_id: i32,
@@ -195,10 +284,12 @@ pub struct NewPermission {
 }
 
 // Global Settings models
+#[allow(dead_code)]
 #[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
 #[diesel(table_name = crate::schema::global_settings)]
+
 pub struct GlobalSetting {
-    pub id: i32,
+    pub id: Option<i32>,
     pub key: String,
     pub value: String,
     pub description: Option<String>,

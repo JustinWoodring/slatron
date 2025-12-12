@@ -40,3 +40,6 @@ slatron-ui/dist/
 # Temporary files
 *.tmp
 *.temp
+
+# Design Doc
+slatron-design-doc.md

@@ -1,6 +1,7 @@
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{NaiveDate, NaiveTime, Timelike};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tracing::{debug, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleCache {
@@ -32,17 +33,37 @@ impl ScheduleCache {
     }
 
     pub fn get_current_block(&self, date: NaiveDate, time: NaiveTime) -> Option<&ScheduleBlock> {
-        let blocks = self.get_blocks_for_date(date)?;
+        debug!("Checking schedule for Date: {:?}, Time: {:?}", date, time);
+
+        let blocks = match self.get_blocks_for_date(date) {
+            Some(b) => b,
+            None => {
+                debug!("No schedule blocks found for date {:?}", date);
+                debug!("Available dates in cache: {:?}", self.schedules.keys());
+                return None;
+            }
+        };
+
+        debug!("Found {} blocks for date {:?}", blocks.len(), date);
+        let current_secs = time.hour() * 3600 + time.minute() * 60 + time.second();
 
         for block in blocks {
             let start = block.start_time;
-            let end_secs = start.num_seconds_from_midnight() + (block.duration_minutes as u32 * 60);
-            let end = NaiveTime::from_num_seconds_from_midnight_opt(end_secs, 0)?;
+            let start_secs = start.hour() * 3600 + start.minute() * 60 + start.second();
+            let end_secs = start_secs + (block.duration_minutes as u32 * 60);
 
-            if time >= start && time < end {
+            debug!(
+                "  Checking Block: Start {:?} ({}s), Dur {}m, End {}s. Current: {}s",
+                start, start_secs, block.duration_minutes, end_secs, current_secs
+            );
+
+            if current_secs >= start_secs && current_secs < end_secs {
+                info!("  -> MATCH! Playing block content {:?}", block.content_id);
                 return Some(block);
             }
         }
+
+        debug!("  -> No matching block found for time {:?}", time);
 
         None
     }

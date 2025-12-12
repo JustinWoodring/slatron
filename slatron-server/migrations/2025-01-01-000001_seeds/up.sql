@@ -1,7 +1,7 @@
 -- Default admin user (password: admin)
--- Generated with: bcrypt::hash("admin", 12)
+-- Generated with: cargo run --example gen_hash
 INSERT INTO users (username, password_hash, role) VALUES
-('admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqEz0xLQK2', 'admin');
+('admin', '$2b$12$vLW9SsWQw19kTDHl75rrp.86.sjZ4Mx.E6EzJOaRJGUmpUxAPAViS', 'admin');
 
 -- Global settings
 INSERT INTO global_settings (key, value, description) VALUES

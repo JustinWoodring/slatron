@@ -19,4 +19,15 @@ impl Config {
         let config: Config = toml::from_str(&content)?;
         Ok(config)
     }
+
+    pub fn default_template() -> &'static str {
+        r#"node_name = "Local"
+server_url = "ws://127.0.0.1:8080/ws"
+secret_key = "change-me"
+heartbeat_interval_secs = 5
+schedule_poll_interval_secs = 60
+mpv_socket_path = "/tmp/mpv-socket"
+offline_mode_warning_hours = 24
+"#
+    }
 }

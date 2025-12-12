@@ -1,18 +1,21 @@
+use crate::models::{NewPermission, Permission};
+use crate::AppState;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
 use diesel::prelude::*;
-use crate::models::{NewPermission, Permission};
-use crate::AppState;
 
 pub async fn list_permissions(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<Permission>>, StatusCode> {
     use crate::schema::permissions::dsl::*;
 
-    let mut conn = state.db.get().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut conn = state
+        .db
+        .get()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let results = permissions
         .select(Permission::as_select())
@@ -28,11 +31,14 @@ pub async fn create_permission(
 ) -> Result<Json<Permission>, StatusCode> {
     use crate::schema::permissions;
 
-    let mut conn = state.db.get().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut conn = state
+        .db
+        .get()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let perm = diesel::insert_into(permissions::table)
         .values(&new_perm)
-        .returning(Permission::as_returning())
+        .returning(Permission::as_select())
         .get_result(&mut conn)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -45,9 +51,12 @@ pub async fn delete_permission(
 ) -> Result<StatusCode, StatusCode> {
     use crate::schema::permissions::dsl::*;
 
-    let mut conn = state.db.get().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut conn = state
+        .db
+        .get()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    diesel::delete(permissions.find(perm_id))
+    diesel::delete(permissions.filter(id.eq(perm_id)))
         .execute(&mut conn)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

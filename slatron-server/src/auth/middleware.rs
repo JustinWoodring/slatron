@@ -1,18 +1,23 @@
+use crate::auth::jwt::verify_token;
+use crate::AppState;
 use axum::{
     extract::{Request, State},
     http::{HeaderMap, StatusCode},
     middleware::Next,
     response::Response,
 };
-use crate::auth::jwt::{verify_token, Claims};
-use crate::AppState;
 
+#[allow(dead_code)]
 pub async fn auth_middleware(
     State(state): State<AppState>,
     headers: HeaderMap,
     mut request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    use crate::models::User;
+    use crate::schema::users::dsl::*;
+    use diesel::prelude::*;
+
     let auth_header = headers
         .get("authorization")
         .and_then(|h| h.to_str().ok())
@@ -23,22 +28,24 @@ pub async fn auth_middleware(
     }
 
     let token = &auth_header[7..];
-    let claims = verify_token(token, &state.config.jwt.secret)
+    let claims = verify_token(token, state.config.jwt.secret.as_bytes())
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
-    // Attach claims to request extensions
+    // Fetch user from DB to ensure validity and get full details
+    let mut conn = state
+        .db
+        .get()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let user = users
+        .filter(id.eq(claims.user_id))
+        .select(User::as_select())
+        .first::<User>(&mut conn)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // Attach user (and claims) to request extensions
     request.extensions_mut().insert(claims);
+    request.extensions_mut().insert(user);
 
     Ok(next.run(request).await)
-}
-
-pub fn extract_claims(headers: &HeaderMap, secret: &str) -> Option<Claims> {
-    let auth_header = headers.get("authorization")?.to_str().ok()?;
-
-    if !auth_header.starts_with("Bearer ") {
-        return None;
-    }
-
-    let token = &auth_header[7..];
-    verify_token(token, secret).ok()
 }

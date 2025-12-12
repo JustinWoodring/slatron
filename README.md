@@ -1,287 +1,196 @@
-# Slatron - TV Scheduling Software
+# Slatron 📺
 
-A distributed TV scheduling system with centralized server, distributed playback nodes, and web-based administration.
+**A robust, distributed TV scheduling and digital signage system.**
 
-## Architecture
+Slatron allows you to manage content, schedule broadcasts, and control playback nodes across your network from a centralized, web-based dashboard. It's built for reliability using Rust and modern web technologies.
 
-### Components
+---
 
-1. **slatron-server**: Rust-based server with REST API and WebSocket support
-2. **slatron-node**: Rust-based playback node that controls MPV
-3. **slatron-ui**: React-based web administration interface
+## 🌟 Key Features
 
-### Technology Stack
+*   **Centralized Management**: Manage multiple playback nodes (TVs, screens) from a single server.
+*   **Flexible Scheduling**: Drag-and-drop schedule grid with layered priorities and interrupt scheduling.
+*   **Role-Based Access Control (RBAC)**: Secure your station with `Admin`, `Editor`, and `Viewer` roles.
+*   **Real-time Monitoring**: Live status updates from nodes via WebSockets.
+*   **Scripting Engine**: Use Rhai scripts for dynamic content loading, overlays, and playback logic.
+*   **Resilient Playback**: Local caching on nodes ensures playback continues even if the network goes down.
+*   **Content Library**: Organize video files and manage valid paths per node.
 
-- **Server**: Rust + Axum + Diesel + SQLite
-- **Node**: Rust + MPV (IPC)
-- **UI**: React + TypeScript + Tailwind + Zustand
-- **Scripting**: Rhai embedded scripting language
-- **Communication**: WebSockets (server↔node), REST API (UI↔server)
+---
 
-## Features
-
-- Multi-day schedule grid with drag-and-drop
-- Layered scheduling with priority-based override
-- Content library with node-specific path awareness
-- Extensible plugin system via Rhai scripts
-- Real-time node monitoring and control
-- Role-based permissions (admin/editor/viewer)
-
-## Getting Started
+## 🚀 Quick Start
 
 ### Prerequisites
+*   **Rust** (1.75+)
+*   **Node.js** (18+)
+*   **MPV** (Must be installed on playback nodes)
+*   **SQLite** (For the server database)
 
-- Rust 1.75 or later
-- Node.js 18 or later
-- MPV media player (for playback nodes)
-- SQLite 3
+### 1. Setting up the Server (`slatron-server`)
 
-### Server Setup
+The server manages the database, API, and serving the web interface. It will automatically initialize the database and run migrations on startup.
 
 ```bash
 cd slatron-server
 
-# Install Diesel CLI
-cargo install diesel_cli --no-default-features --features sqlite
-
-# Create database directory
+# 1. Setup Database Directory
 mkdir -p data
 
-# Run migrations
-diesel migration run
-
-# Build and run
-cargo build --release
-./target/release/slatron-server
+# 2. Build & Run (Embedding the UI for ease of use)
+# This requires `npm` to be in your path, as it builds the UI automatically.
+cargo run --release --features embed-ui -- --generate-config > config.toml
+# Edit config.toml if needed, then:
+cargo run --release --features embed-ui
 ```
 
-The server will start on `http://localhost:8080`
+The server will start on `http://0.0.0.0:8080` (or your configured port).
+**Default Login**: `admin` / `admin`
 
-Default credentials:
-- Username: `admin`
-- Password: `admin`
+### 2. Setting up a Node (`slatron-node`)
 
-### Node Setup
+The node runs on the computer connected to the display (e.g., a Raspberry Pi or mini PC).
 
 ```bash
 cd slatron-node
 
-# Edit config.toml with your node settings
-cp config.toml config.local.toml
-# Edit config.local.toml with your server URL and secret key
+# 1. Generate a config template
+cargo run --release -- --generate-config > config.toml
 
-# Build and run
-cargo build --release
-./target/release/slatron-node --config config.local.toml
+# 2. Edit config.toml
+# - Set `server_url` to your server's WebSocket URL (e.g., ws://192.168.1.10:8080/ws)
+# - You will need a `secret_key`. Log into the Web UI, go to "Nodes", create a node, and copy its secret.
+
+# 3. Run the node
+cargo run --release
 ```
 
-**Important**: You need to register the node through the web UI first to get the secret key.
+**Note**: Ensure `mpv` is installed and available in the system PATH. Slatron will launch and control it automatically.
 
-### UI Setup
+---
 
-```bash
-cd slatron-ui
+## ⚙️ Configuration
 
-# Install dependencies
-npm install
+Both components support CLI arguments for configuration management.
 
-# Development mode
-npm run dev
+### Command Line Interface
+- **Generate Template**: `slatron-server --generate-config` (Prints to stdout)
+- **Specify File**: `slatron-server --config my_config.toml`
+- **Default**: Looks for `config.toml` in the current directory.
 
-# Production build (outputs to ../slatron-server/static)
-npm run build
-```
-
-In development, the UI runs on `http://localhost:3000` and proxies API requests to the server.
-
-## Configuration
-
-### Server (config.toml)
+### Server Configuration (`config.toml`)
 
 ```toml
 [server]
 host = "0.0.0.0"
 port = 8080
+# Optional: Path to serve UI files from. 
+# If omitted and compiled with `embed-ui`, it uses the internal zip.
+# ui_path = "./static"
+
+[server.https]
+enabled = false
+# cert_path = "/path/to/cert.pem"
+# key_path = "/path/to/key.pem"
 
 [database]
 url = "sqlite://data/slatron.db"
 
 [jwt]
-secret = "your-secret-key-change-in-production"
+secret = "CHANGE_THIS_IN_PRODUCTION"
 expiration_hours = 24
-
-[logging]
-level = "info"
 ```
 
-### Node (config.toml)
-
+### Node Configuration (`config.toml`)
 ```toml
-node_name = "studio-a"
-server_url = "ws://127.0.0.1:8080/ws"
-secret_key = "your-secret-key-from-server"
+node_name = "Lobby Display"
+server_url = "ws://localhost:8080/ws"
+secret_key = "PASTE_SECRET_FROM_UI"
 heartbeat_interval_secs = 5
-schedule_poll_interval_secs = 60
 mpv_socket_path = "/tmp/mpv-socket"
-offline_mode_warning_hours = 24
 ```
 
-## MPV Setup
+---
 
-For nodes to control playback, MPV must be running with IPC enabled:
+## 📦 Deployment & Frontend Embedding
 
-```bash
-mpv --input-ipc-server=/tmp/mpv-socket --idle
-```
+### Single Binary Deployment
+To simplify deployment, you can embed the frontend files directly into the server binary.
 
-## API Documentation
+1.  Enable the `embed-ui` feature during compilation:
+    ```bash
+    cargo build --release --bin slatron-server --features embed-ui
+    ```
+    *This triggers a build script that runs `npm run build` in `slatron-ui` and zips the result.*
 
-The REST API is documented in the design document. Key endpoints:
+2.  Run the binary anywhere. It will automatically extract the UI to an `embedded_ui` directory at startup and serve it.
+    *   No need to copy a `static/` folder manually!
 
-- `POST /api/auth/login` - Authentication
-- `GET /api/schedules` - List schedules
-- `GET /api/content` - List content items
-- `GET /api/nodes` - List nodes
-- `GET /api/scripts` - List scripts
-- `GET /api/schedules/collapsed?node_id=1&date=2025-12-05` - Get collapsed schedule
+### HTTPS Support
+Secure your server by enabling HTTPS in `config.toml`. You will need a certificate and private key (e.g., from Let's Encrypt).
 
-## WebSocket Protocol
+---
 
-Nodes connect via WebSocket to `/ws` and exchange JSON messages:
+## 🛠 Architecture
 
-### Node → Server
-- `authenticate` - Initial authentication
-- `heartbeat` - Status updates every 5 seconds
-- `request_schedule` - Request schedule reload
-- `report_paths` - Report available content paths
-- `content_error` - Report playback errors
+### Components
+*   **slatron-server** (Rust/Axum): The brain. Handles database, API, Auth, and WebSockets.
+*   **slatron-node** (Rust): The player. Connects to server, downloads content/schedules, and controls MPV via IPC.
+*   **slatron-ui** (React/Vite): The face. communicating via REST API.
 
-### Server → Node
-- `auth_response` - Authentication result
-- `schedule_updated` - Notify of schedule changes
-- `command` - Playback commands (play, pause, stop, seek, etc.)
-- `heartbeat_ack` - Heartbeat acknowledgment
+### Scripting (Rhai)
+Slatron uses the Rhai scripting language for safety and flexibility.
+*   **Content Loaders**: Custom logic to fetch/prepare content (e.g., download from YouTube).
+*   **Global Scripts**: Run logic based on playback events (e.g., "If content < 10s, loop it").
 
-## Rhai Scripting
+### Heartbeat Monitoring
+Nodes send heartbeats every 5 seconds. If the server doesn't hear from a node for **30 seconds**, it automatically marks it as `Offline` in the dashboard.
 
-Slatron supports three types of Rhai scripts:
+---
 
-### 1. Content Loaders
-Download or prepare content before playback.
+## Scripting API Reference (Rhai)
 
-```rust
-let url = params["url"];
-let output_dir = params["output_dir"];
-let cmd = `yt-dlp -o "${output_dir}/%(title)s.%(ext)s" "${url}"`;
-shell_execute(cmd);
-`${output_dir}/video.mp4`
-```
+Scripts in Slatron allow you to customize playback behavior and interactivity.
 
-### 2. Overlay Scripts
-Add visual elements via MPV overlays.
+### Lifecycle Hooks
+These functions are called automatically by the node during the playback lifecycle.
 
-```rust
-let logo_path = params["logo_path"];
-let x = get_video_width() - 110;
-let y = 10;
-mpv_overlay(logo_path, x, y, 0.8);
-```
+*   `fn transform(settings)` -> `Map`
+    *   **When**: Called *before* playback starts.
+    *   **Purpose**: Update settings (volume, loop, start/end time) based on custom logic.
+    *   **Returns**: A Map of settings to override.
+*   `fn on_load(settings)`
+    *   **When**: Called immediately *after* playback starts.
+    *   **Purpose**: Apply overlays, start auxiliary processes, or log events.
+*   `fn on_unload(settings)`
+    *   **When**: Called *before* the content changes or stops.
+    *   **Purpose**: Cleanup (e.g., remove overlays).
 
-### 3. Global Scripts
-Control playback behavior.
+### Core Functions
 
-```rust
-let content_duration = get_content_duration();
-let block_duration = get_block_duration();
-if content_duration < block_duration {
-    mpv_set_loop(true);
-}
-```
+#### Playback Control
+*   `set_volume(ctx, volume: int)`: Set playback volume (0-100).
+*   `set_loop(ctx, enabled: bool)`: Enable/Disable looping.
+*   `set_start_time(ctx, seconds: float)`: Start playback from offset.
+*   `set_end_time(ctx, seconds: float)`: Stop playback at offset.
+*   `mpv_send(command_map)`: Send a raw JSON command to MPV (Node-side only).
 
-## Deployment
+#### System & Content
+*   `download_file(url, output_path)`: Downloads a file. Supports `~` expansion on nodes.
+*   `shell_execute(command)`: Executes a shell command and returns output.
+*   `get_env(key)`: Returns value of an environment variable.
 
-### Docker (Server)
+#### Overlays
+*   `mpv_overlay(path, x, y, opacity)`: Display an image overlay.
+*   `mpv_text(text, x, y, size, color)`: Display text overlay.
+*   `mpv_remove_overlay(id)`: Remove an overlay.
+*   `get_video_width()` / `get_video_height()`: Get resolution of current content.
 
-```dockerfile
-FROM rust:1.75 as builder
-WORKDIR /app
-COPY slatron-server .
-RUN cargo build --release
+---
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y libsqlite3-0
-COPY --from=builder /app/target/release/slatron-server /usr/local/bin/
-EXPOSE 8080
-CMD ["slatron-server"]
-```
+## 📄 License
 
-### Systemd (Node)
+Slatron is licensed under the **GNU Affero General Public License v3.0 (AGPLv3)**.
+See the [LICENSE](LICENSE) file for details.
 
-```ini
-[Unit]
-Description=Slatron Node
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/slatron-node --config /etc/slatron/config.toml
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## Development
-
-### Project Structure
-
-```
-slatron/
-├── slatron-server/       # Rust server
-│   ├── src/
-│   │   ├── api/          # REST API endpoints
-│   │   ├── auth/         # JWT authentication
-│   │   ├── models/       # Diesel models
-│   │   ├── services/     # Business logic
-│   │   ├── websocket/    # WebSocket handler
-│   │   └── rhai_engine/  # Rhai scripting
-│   ├── migrations/       # Database migrations
-│   └── static/           # React build output
-├── slatron-node/         # Rust node
-│   └── src/
-│       ├── mpv_client.rs # MPV IPC client
-│       ├── websocket_client.rs
-│       ├── schedule.rs   # Schedule cache
-│       └── heartbeat.rs  # Heartbeat manager
-└── slatron-ui/           # React UI
-    └── src/
-        ├── pages/        # Route pages
-        ├── components/   # React components
-        ├── stores/       # Zustand stores
-        └── api/          # API client
-```
-
-### Building from Source
-
-```bash
-# Server
-cd slatron-server
-cargo build --release
-
-# Node
-cd slatron-node
-cargo build --release
-
-# UI
-cd slatron-ui
-npm install
-npm run build
-```
-
-## License
-
-See design document for full specification.
-
-## Support
-
-For issues and feature requests, please refer to the design document (slatron-design-doc.md).
+---
+**Created by Justin Woodring &SLATRON AUTHORS**

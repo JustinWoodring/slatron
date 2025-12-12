@@ -33,67 +33,78 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900">
-      <div className="max-w-md w-full space-y-8 p-8 bg-gray-800 rounded-lg shadow-xl">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-white">
-            Slatron
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-400">
-            TV Scheduling System
-          </p>
-        </div>
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          {error && (
-            <div className="rounded-md bg-red-900 p-4">
-              <div className="text-sm text-red-200">{error}</div>
+    <div className="min-h-screen flex items-center justify-center bg-[var(--bg-primary)] pattern-grid">
+      <div className="max-w-md w-full p-8 glass-panel rounded-2xl shadow-2xl relative overflow-hidden">
+        {/* Glow effect */}
+        <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 rounded-full bg-indigo-500/10 blur-3xl pointer-events-none" />
+        <div className="absolute bottom-0 left-0 -ml-16 -mb-16 w-64 h-64 rounded-full bg-cyan-500/10 blur-3xl pointer-events-none" />
+
+        <div className="relative z-10">
+          <div className="text-center mb-10">
+            <div className="flex justify-center mb-6">
+              <img src="/logo.png" alt="Slatron" className="h-16 w-auto" />
             </div>
-          )}
-          <div className="rounded-md shadow-sm -space-y-px">
-            <div>
-              <label htmlFor="username" className="sr-only">
-                Username
-              </label>
-              <input
-                id="username"
-                name="username"
-                type="text"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-700 placeholder-gray-500 text-white bg-gray-700 rounded-t-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                placeholder="Username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
-            </div>
-            <div>
-              <label htmlFor="password" className="sr-only">
-                Password
-              </label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-700 placeholder-gray-500 text-white bg-gray-700 rounded-b-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
+            <p className="text-[var(--text-secondary)] text-sm font-medium uppercase tracking-widest">
+              Broadcast Automation
+            </p>
           </div>
 
-          <div>
+          <form className="space-y-6" onSubmit={handleSubmit}>
+            {error && (
+              <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-4 animate-shake">
+                <div className="text-sm text-red-400 text-center font-medium">{error}</div>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="username" className="block text-xs font-medium text-[var(--text-secondary)] uppercase mb-1">
+                  Username
+                </label>
+                <input
+                  id="username"
+                  name="username"
+                  type="text"
+                  required
+                  className="block w-full px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all"
+                  placeholder="Enter your username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="password" className="block text-xs font-medium text-[var(--text-secondary)] uppercase mb-1">
+                  Password
+                </label>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  required
+                  className="block w-full px-4 py-3 bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+            </div>
+
             <button
               type="submit"
               disabled={loading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+              className="w-full btn-primary py-3 text-base flex justify-center relative overflow-hidden group"
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              <div className="absolute inset-0 bg-white/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
+              <span className="relative">{loading ? 'Authenticating...' : 'Sign In'}</span>
             </button>
+          </form>
+
+          <div className="mt-8 text-center">
+            <p className="text-xs text-[var(--text-secondary)]">
+              System v1.0 • Protected Access
+            </p>
           </div>
-        </form>
-        <div className="text-center text-sm text-gray-400">
-          Default credentials: admin / admin
         </div>
       </div>
     </div>

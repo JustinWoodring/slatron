@@ -1,5 +1,5 @@
 use std::time::Duration;
-use sysinfo::{ProcessExt, System, SystemExt};
+use sysinfo::System;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::interval;
 
@@ -36,14 +36,32 @@ impl HeartbeatManager {
         let mut sys = System::new_all();
         sys.refresh_all();
 
-        // Get CPU and memory usage
-        let cpu_usage = sys.global_cpu_info().cpu_usage() as f64;
+        // Get CPU and memory usage (sysinfo 0.30 API)
+        // Calculate average CPU usage across all cores
+        let cpu_usage = if !sys.cpus().is_empty() {
+            sys.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>() / sys.cpus().len() as f32
+        } else {
+            0.0
+        } as f64;
+
         let memory_usage = (sys.used_memory() as f64) / (1024.0 * 1024.0); // Convert to MB
 
+        // Get playback status
+        let current_content_id = *self.state.current_content_id.read().await;
+
+        // Get position from MPV if playing
+        let playback_position_secs = if current_content_id.is_some() {
+            self.state.mpv.get_position().ok().map(|p| p as f32)
+        } else {
+            None
+        };
+
+        let status = "online".to_string();
+
         NodeMessage::Heartbeat {
-            current_content_id: None, // TODO: Get from playback state
-            playback_position_secs: None, // TODO: Get from MPV
-            status: "stopped".to_string(), // TODO: Get actual status
+            current_content_id,
+            playback_position_secs,
+            status,
             cpu_usage_percent: cpu_usage,
             memory_usage_mb: memory_usage,
             errors: vec![],

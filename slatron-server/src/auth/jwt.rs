@@ -3,12 +3,12 @@ use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String,        // username
+    pub sub: String, // username
     pub user_id: i32,
     pub role: String,
-    pub exp: i64,           // expiration time
+    pub exp: i64, // expiration time
 }
 
 pub fn create_token(
@@ -38,12 +38,12 @@ pub fn create_token(
     .map_err(|e| anyhow::anyhow!("Failed to create token: {}", e))
 }
 
-pub fn verify_token(token: &str, secret: &str) -> Result<Claims> {
+#[allow(dead_code)]
+pub fn verify_token(token_str: &str, secret: &[u8]) -> Result<Claims, jsonwebtoken::errors::Error> {
     decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
+        token_str,
+        &DecodingKey::from_secret(secret),
         &Validation::default(),
     )
     .map(|data| data.claims)
-    .map_err(|e| anyhow::anyhow!("Invalid token: {}", e))
 }
