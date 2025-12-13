@@ -44,6 +44,63 @@ struct Cli {
     generate_config: bool,
 }
 
+fn run_onboarding() -> Result<Config> {
+    use dialoguer::{theme::ColorfulTheme, Input};
+
+    println!("Welcome to Slatron Server!");
+    println!("It looks like you don't have a configuration file yet.");
+    println!("Let's get you set up.\n");
+
+    let host: String = Input::with_theme(&ColorfulTheme::default())
+        .with_prompt("Server Host")
+        .default("0.0.0.0".to_string())
+        .interact_text()?;
+
+    let port: u16 = Input::with_theme(&ColorfulTheme::default())
+        .with_prompt("Server Port")
+        .default(8080)
+        .interact_text()?;
+
+    let db_url: String = Input::with_theme(&ColorfulTheme::default())
+        .with_prompt("Database URL")
+        .default("sqlite://slatron.db".to_string())
+        .interact_text()?;
+
+    // Generate random JWT secret
+    let jwt_secret = uuid::Uuid::new_v4().to_string();
+
+    let config_content = format!(
+        r#"[server]
+host = "{}"
+port = {}
+
+[server.https]
+enabled = false
+cert_path = "certs/cert.pem"
+key_path = "certs/key.pem"
+
+[database]
+url = "{}"
+
+[jwt]
+secret = "{}"
+expiration_hours = 24
+
+[logging]
+level = "info"
+"#,
+        host, port, db_url, jwt_secret
+    );
+
+    println!("\nGenerating configuration file: server-config.toml");
+    std::fs::write("server-config.toml", &config_content)?;
+    println!("Configuration saved successfully!");
+    println!("----------------------------------------\n");
+
+    let config: Config = toml::from_str(&config_content)?;
+    Ok(config)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse CLI args
@@ -64,18 +121,48 @@ async fn main() -> Result<()> {
         .init();
 
     // Determine config path
-    let config_path = cli.config.unwrap_or_else(|| "config.toml".to_string());
+    let config_path = cli
+        .config
+        .clone()
+        .unwrap_or_else(|| "config.toml".to_string());
 
     // Check if config exists
     if std::fs::metadata(&config_path).is_err() {
+        // If config arg was NOT explicitly passed (and we defaulted currently), AND we are in a TTY
+        // Then try onboarding.
+        // clap doesn't tell us easily if it was default, so we check if cli.config is None.
+        if cli.config.is_none() && console::user_attended() {
+            match run_onboarding() {
+                Ok(_cfg) => {
+                    // Update the path we are "loading from" conceptually, though we return the object directly
+                    // Actually, run_onboarding saves to "server-config.toml", so let's stick with that.
+                    // But we already loaded the struct, so we can just return it.
+                    // However, main flow expects to load it. Let's just fall through or return.
+                    // simpler: run onboarding, then update config_path to "server-config.toml"
+                    // checking if it exists now.
+                }
+                Err(e) => {
+                    eprintln!("Onboarding failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
+    // Check again
+    let effective_config_path = if std::fs::metadata(&config_path).is_ok() {
+        config_path
+    } else if std::fs::metadata("server-config.toml").is_ok() {
+        "server-config.toml".to_string()
+    } else {
         eprintln!("Error: Configuration file '{}' not found.", config_path);
         eprintln!("Run with --generate-config to see a template.");
         std::process::exit(1);
-    }
+    };
 
     // Load configuration
-    let config = Config::load(&config_path)?;
-    tracing::info!("Loaded configuration from {}", config_path);
+    let config = Config::load(&effective_config_path)?;
+    tracing::info!("Loaded configuration from {}", effective_config_path);
 
     // Setup database
     let db_pool = db::create_pool(&config.database.url)?;

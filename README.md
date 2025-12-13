@@ -6,7 +6,6 @@ Slatron allows you to manage content, schedule broadcasts, and control playback 
 
 <img width="1460" height="1017" alt="image" src="https://github.com/user-attachments/assets/8ff8ed0e-2c4f-41bc-a05b-94cc5d04ec15" />
 
-
 ---
 
 ## 🌟 Key Features
@@ -78,9 +77,9 @@ Both components support CLI arguments for configuration management.
 ### Command Line Interface
 - **Generate Template**: `slatron-server --generate-config` (Prints to stdout)
 - **Specify File**: `slatron-server --config my_config.toml`
-- **Default**: Looks for `config.toml` in the current directory.
+- **Default / Interactive**: Looks for `config.toml` in the current directory. If not found and running in an interactive terminal, it will launch an **Onboarding Wizard** to help you generate one.
 
-### Server Configuration (`config.toml`)
+### Server Configuration (`server-config.toml`)
 
 ```toml
 [server]
@@ -103,7 +102,7 @@ secret = "CHANGE_THIS_IN_PRODUCTION"
 expiration_hours = 24
 ```
 
-### Node Configuration (`config.toml`)
+### Node Configuration (`node-config.toml`)
 ```toml
 node_name = "Lobby Display"
 server_url = "ws://localhost:8080/ws"
@@ -196,4 +195,5 @@ Slatron is licensed under the **GNU Affero General Public License v3.0 (AGPLv3)*
 See the [LICENSE](LICENSE) file for details.
 
 ---
-**Created by Justin Woodring &SLATRON AUTHORS**
+
+**Created by Justin Woodring & SLATRON AUTHORS**

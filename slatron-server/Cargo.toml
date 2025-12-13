@@ -33,6 +33,8 @@ rand_core = "0.9.3"
 clap = { version = "4.5", features = ["derive"] }
 axum-server = { version = "0.7.1", features = ["tls-rustls"] }
 zip = "0.6"
+dialoguer = "0.12.0"
+console = "0.16.1"
 
 [build-dependencies]
 zip = "0.6"

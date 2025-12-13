@@ -32,6 +32,7 @@ pub struct NodeState {
     pub mpv_process: Arc<Mutex<Option<Child>>>,
     pub log_sender: Arc<Mutex<Option<UnboundedSender<crate::websocket_client::NodeMessage>>>>,
     pub script_cache: Arc<RwLock<HashMap<i32, String>>>,
+    pub script_name_cache: Arc<RwLock<HashMap<String, i32>>>,
     pub content_cache: Arc<RwLock<HashMap<i32, ServerContentItem>>>, // To lookup transformer_scripts
     pub current_content_id: Arc<RwLock<Option<i32>>>,
     pub global_settings: Arc<RwLock<HashMap<String, String>>>,
@@ -121,6 +122,7 @@ pub struct ServerContentItem {
 #[derive(Deserialize)]
 pub struct ServerScript {
     pub id: i32,
+    pub name: String,
     pub script_content: String,
     pub script_type: String,
 }
@@ -137,6 +139,52 @@ struct Cli {
     /// Generate a default configuration template to stdout
     #[arg(long)]
     generate_config: bool,
+}
+
+fn run_onboarding() -> Result<Config> {
+    use dialoguer::{theme::ColorfulTheme, Input};
+
+    println!("Welcome to Slatron Node!");
+    println!("It looks like you don't have a configuration file yet.");
+    println!("Let's get you set up to connect to your Slatron Server.\n");
+
+    let node_name: String = Input::with_theme(&ColorfulTheme::default())
+        .with_prompt("Node Name")
+        .default("Local".to_string())
+        .interact_text()?;
+
+    let server_url: String = Input::with_theme(&ColorfulTheme::default())
+        .with_prompt("Slatron Server URL (WebSocket)")
+        .default("ws://127.0.0.1:8080/ws".to_string())
+        .interact_text()?;
+
+    // Warn user about Secret Key
+    println!("\n[!] You need a Secret Key from your Slatron Server to connect.");
+    println!("    You can find this when creating a new Node in the Server Dashboard.\n");
+
+    let secret_key: String = Input::with_theme(&ColorfulTheme::default())
+        .with_prompt("Node Secret Key")
+        .interact_text()?;
+
+    let config_content = format!(
+        r#"node_name = "{}"
+server_url = "{}"
+secret_key = "{}"
+heartbeat_interval_secs = 5
+schedule_poll_interval_secs = 60
+mpv_socket_path = "/tmp/mpv-socket"
+offline_mode_warning_hours = 24
+"#,
+        node_name, server_url, secret_key
+    );
+
+    println!("\nGenerating configuration file: node-config.toml");
+    std::fs::write("node-config.toml", &config_content)?;
+    println!("Configuration saved successfully!");
+    println!("----------------------------------------\n");
+
+    let config: Config = toml::from_str(&config_content)?;
+    Ok(config)
 }
 
 #[tokio::main]
@@ -166,17 +214,42 @@ async fn main() -> Result<()> {
         .init();
 
     // Determine config path
-    let config_path = cli.config.unwrap_or_else(|| "config.toml".to_string());
+    let config_path = cli
+        .config
+        .clone()
+        .unwrap_or_else(|| "config.toml".to_string());
 
     // Check if config exists
     if std::fs::metadata(&config_path).is_err() {
+        // If config arg was NOT explicitly passed (and we defaulted currently), AND we are in a TTY
+        // Then try onboarding.
+        if cli.config.is_none() && console::user_attended() {
+            match run_onboarding() {
+                Ok(_cfg) => {
+                    // fall through, logic below picks up file or we could use cfg directly but
+                    // main flow loads from file path.
+                }
+                Err(e) => {
+                    eprintln!("Onboarding failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
+    // Check again
+    let effective_config_path = if std::fs::metadata(&config_path).is_ok() {
+        config_path
+    } else if std::fs::metadata("node-config.toml").is_ok() {
+        "node-config.toml".to_string()
+    } else {
         eprintln!("Error: Configuration file '{}' not found.", config_path);
         eprintln!("Run with --generate-config to see a template.");
         std::process::exit(1);
-    }
+    };
 
     // Load configuration
-    let config = Config::load(&config_path)?;
+    let config = Config::load(&effective_config_path)?;
     tracing::info!("Loaded configuration for node: {}", config.node_name);
 
     // Spawn MPV
@@ -227,6 +300,7 @@ async fn main() -> Result<()> {
         mpv_process: Arc::new(Mutex::new(mpv_child)),
         log_sender: log_sender,
         script_cache: Arc::new(RwLock::new(HashMap::new())),
+        script_name_cache: Arc::new(RwLock::new(HashMap::new())),
         content_cache: Arc::new(RwLock::new(HashMap::new())),
         current_content_id: Arc::new(RwLock::new(None)),
         global_settings: Arc::new(RwLock::new(HashMap::new())),
@@ -353,6 +427,7 @@ async fn fetch_and_update_schedule(client: &reqwest::Client, state: &NodeState, 
                 // Update cache
                 let mut cache = state.schedule_cache.write().await;
                 let mut script_cache = state.script_cache.write().await;
+                let mut script_name_cache = state.script_name_cache.write().await;
                 let mut content_cache = state.content_cache.write().await;
 
                 let mut content_map = HashMap::new();
@@ -363,6 +438,7 @@ async fn fetch_and_update_schedule(client: &reqwest::Client, state: &NodeState, 
 
                 for script in response.scripts {
                     script_cache.insert(script.id, script.script_content);
+                    script_name_cache.insert(script.name, script.id);
                 }
 
                 let mut blocks_by_date: HashMap<NaiveDate, Vec<crate::schedule::ScheduleBlock>> =
@@ -489,7 +565,14 @@ async fn playback_loop(state: NodeState) {
                     {
                         let global_guard = state.global_settings.read().await;
                         if let Some(json_str) = global_guard.get("global_active_scripts") {
-                            if let Ok(ids) = serde_json::from_str::<Vec<i32>>(json_str) {
+                            if let Ok(names) = serde_json::from_str::<Vec<String>>(json_str) {
+                                let name_cache = state.script_name_cache.read().await;
+                                for name in names {
+                                    if let Some(id) = name_cache.get(&name) {
+                                        global_script_ids.push(*id);
+                                    }
+                                }
+                            } else if let Ok(ids) = serde_json::from_str::<Vec<i32>>(json_str) {
                                 global_script_ids = ids;
                             } else if let Ok(id) = json_str.parse::<i32>() {
                                 global_script_ids.push(id);

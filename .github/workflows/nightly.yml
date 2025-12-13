@@ -1,0 +1,112 @@
+name: Nightly Build
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-server:
+    name: Server (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 18
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Install Cross-Compilation Tools (Linux ARM64)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+
+    - name: Configure Cargo for Cross Compilation (Linux ARM64)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        mkdir -p .cargo
+        echo '[target.aarch64-unknown-linux-gnu]' > .cargo/config.toml
+        echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+
+    - name: Build Server
+      run: cargo build --release --bin slatron-server --target ${{ matrix.target }} --features embed-ui
+      working-directory: slatron-server
+
+    - name: Package Server
+      run: |
+        cd slatron-server/target/${{ matrix.target }}/release
+        # Use different zip command or standard zip on mac/linux
+        zip slatron-server-${{ matrix.target }}.zip slatron-server
+      
+    - name: Upload Server Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: slatron-server-${{ matrix.target }}
+        path: slatron-server/target/${{ matrix.target }}/release/slatron-server-${{ matrix.target }}.zip
+
+  build-node:
+    name: Node (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Install Cross-Compilation Tools (Linux ARM64)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+
+    - name: Configure Cargo for Cross Compilation (Linux ARM64)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        mkdir -p .cargo
+        echo '[target.aarch64-unknown-linux-gnu]' > .cargo/config.toml
+        echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+
+    - name: Build Node
+      run: cargo build --release --bin slatron-node --target ${{ matrix.target }}
+      working-directory: slatron-node
+
+    - name: Package Node
+      run: |
+        cd slatron-node/target/${{ matrix.target }}/release
+        zip slatron-node-${{ matrix.target }}.zip slatron-node
+
+    - name: Upload Node Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: slatron-node-${{ matrix.target }}
+        path: slatron-node/target/${{ matrix.target }}/release/slatron-node-${{ matrix.target }}.zip

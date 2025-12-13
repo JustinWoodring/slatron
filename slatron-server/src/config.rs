@@ -64,7 +64,7 @@ key_path = "certs/key.pem"
 
 [database]
 # URL for the SQLite database. Ensure the directory exists.
-url = "sqlite://data/slatron.db"
+url = "sqlite://slatron.db"
 
 [jwt]
 secret = "change-me-in-production"
