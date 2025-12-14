@@ -1,7 +1,0 @@
-node_name = "Local"
-server_url = "ws://127.0.0.1:8080/ws"
-secret_key = "508ccf07-a84f-47f5-b882-6d5bc6ff9d2d"
-heartbeat_interval_secs = 5
-schedule_poll_interval_secs = 60
-mpv_socket_path = "/tmp/mpv-socket"
-offline_mode_warning_hours = 24

@@ -145,6 +145,25 @@ pub struct NewSchedule {
     pub is_active: bool,
 }
 
+#[derive(Debug, AsChangeset, Deserialize)]
+#[diesel(table_name = crate::schema::schedules)]
+pub struct UpdateSchedule {
+    pub name: Option<String>,
+    pub description: Option<Option<String>>, // Option<Option> to allow nulling out? Or just Option<String>?
+    // Diesel treats Option::None as "do not update". To set to NULL, we need Option<Option<T>>?
+    // Wait, description is Nullable<Text>.
+    // If we want to set it to NULL, we likely need Option<Option<String>> or just pass explicit null.
+    // simpler: Option<String>. But if None, it skips. How to unset description?
+    // Usually via explicit null in JSON -> Some(None).
+    // Let's stick to simple Option<String> for now and assume simple updates.
+    // Actually, strictly speaking `Option<String>` in AsChangeset means "if None, don't update".
+    // If the field is nullable, we might want to set it to null.
+    // For now, let's just mirror NewSchedule but with Options.
+    pub schedule_type: Option<String>,
+    pub priority: Option<i32>,
+    pub is_active: Option<bool>,
+}
+
 // Schedule Block models
 #[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
 #[diesel(table_name = crate::schema::schedule_blocks)]

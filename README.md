@@ -1,6 +1,15 @@
-# Slatron 📺
-
-**A robust, distributed TV scheduling and digital signage system.**
+<div align="center">
+  <img src="slatron-ui/public/logo.png" width="200" alt="Slatron Logo" />
+  <h1>Slatron</h1>
+  <p>
+    <strong>A robust, distributed TV scheduling and digital signage system.</strong>
+  </p>
+  <p>
+    <a href="https://github.com/JustinWoodring/slatron/actions/workflows/nightly.yml">
+      <img src="https://github.com/JustinWoodring/slatron/actions/workflows/nightly.yml/badge.svg" alt="Nightly Build" />
+    </a>
+  </p>
+</div>
 
 Slatron allows you to manage content, schedule broadcasts, and control playback nodes across your network from a centralized, web-based dashboard. It's built for reliability using Rust and modern web technologies.
 

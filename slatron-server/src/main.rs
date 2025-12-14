@@ -124,7 +124,7 @@ async fn main() -> Result<()> {
     let config_path = cli
         .config
         .clone()
-        .unwrap_or_else(|| "config.toml".to_string());
+        .unwrap_or_else(|| "server-config.toml".to_string());
 
     // Check if config exists
     if std::fs::metadata(&config_path).is_err() {

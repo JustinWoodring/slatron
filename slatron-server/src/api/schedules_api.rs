@@ -1,4 +1,4 @@
-use crate::models::{NewSchedule, NewScheduleBlock, Schedule, ScheduleBlock, User};
+use crate::models::{NewSchedule, NewScheduleBlock, Schedule, ScheduleBlock, UpdateSchedule, User};
 use crate::AppState;
 use axum::{
     extract::{Path, Query, State},
@@ -77,7 +77,7 @@ pub async fn update_schedule(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
     Path(schedule_id): Path<i32>,
-    Json(updates): Json<NewSchedule>,
+    Json(updates): Json<UpdateSchedule>,
 ) -> Result<Json<Schedule>, StatusCode> {
     if !user.is_editor() {
         return Err(StatusCode::FORBIDDEN);
@@ -91,7 +91,7 @@ pub async fn update_schedule(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Enforce activation logic: A schedule cannot be active if it isn't assigned to a node.
-    if updates.is_active {
+    if let Some(true) = updates.is_active {
         let count: i64 = node_schedules::table
             .filter(node_schedules::schedule_id.eq(schedule_id))
             .count()
@@ -104,13 +104,7 @@ pub async fn update_schedule(
     }
 
     let schedule = diesel::update(schedules.filter(id.eq(schedule_id)))
-        .set((
-            name.eq(updates.name),
-            description.eq(updates.description),
-            schedule_type.eq(updates.schedule_type),
-            priority.eq(updates.priority),
-            is_active.eq(updates.is_active),
-        ))
+        .set(&updates)
         .returning(Schedule::as_select())
         .get_result(&mut conn)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

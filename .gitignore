@@ -44,3 +44,6 @@ slatron-ui/dist/
 
 # Design Doc
 slatron-design-doc.md
+
+server-config.toml
+node-config.toml
