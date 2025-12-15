@@ -31,7 +31,13 @@ Slatron allows you to manage content, schedule broadcasts, and control playback 
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### VIDEO TUTORIALS:
+- [Getting Started with Slatron on Mac](https://youtu.be/alMnX4MNhcI)
+
+
+## Building For Yourself
+
+### 0. Build Prerequisites
 *   **Rust** (1.75+)
 *   **Node.js** (18+)
 *   **MPV** (Must be installed on playback nodes)
