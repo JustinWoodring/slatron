@@ -1,6 +1,6 @@
 use rhai::{Engine, Scope};
 
-pub fn create_engine(script_type: &str) -> Engine {
+pub fn create_engine(script_type: &str, mpv: Option<std::sync::Arc<crate::mpv_client::MpvClient>>) -> Engine {
     let mut engine = Engine::new();
 
     // Register functions based on script type
@@ -9,10 +9,18 @@ pub fn create_engine(script_type: &str) -> Engine {
             register_content_loader_functions(&mut engine);
         }
         "overlay" => {
-            register_overlay_functions(&mut engine);
+             if let Some(mpv) = mpv {
+                 register_overlay_functions(&mut engine, mpv);
+             } else {
+                 tracing::warn!("MPV client not provided for overlay script engine");
+             }
         }
         "global" => {
-            register_global_functions(&mut engine);
+            if let Some(mpv) = mpv {
+                register_global_functions(&mut engine, mpv);
+            } else {
+                tracing::warn!("MPV client not provided for global script engine");
+            }
         }
         "transformer" => {
             register_transformer_functions(&mut engine);
@@ -83,43 +91,116 @@ fn register_content_loader_functions(engine: &mut Engine) {
     });
 }
 
-fn register_overlay_functions(engine: &mut Engine) {
+fn register_overlay_functions(
+    engine: &mut Engine,
+    mpv: std::sync::Arc<crate::mpv_client::MpvClient>,
+) {
+    let mpv_clone = mpv.clone();
     engine.register_fn(
         "mpv_overlay",
-        |_path: String, _x: i64, _y: i64, _opacity: f64| {
-            // TODO: Send to MPV
+        move |path: String, x: i64, y: i64, opacity: f64| {
+            // TODO: MPV overlay-add command
+            // We use overlay-add <id> <x> <y> <file> <offset> <fmt> <w> <h> <stride-w> <stride-h>
+            // Actually, simpler usage via `video-add` might be better for images, but overlay-add is for OSD?
+            // "overlay-add" is for OSD overlays.
+            // Signature: overlay-add <id> <x> <y> <file> <offset> <fmt> <w> <h> <stride-w> <stride-h>
+            // But MPV client has add_overlay
+            if let Err(e) = mpv_clone.add_overlay(&path, x as i32, y as i32, opacity) {
+                tracing::error!(target: "slatron_node::rhai", "mpv_overlay failed: {}", e);
+            }
         },
     );
 
+    let mpv_clone = mpv.clone();
     engine.register_fn(
         "mpv_text",
-        |_text: String, _x: i64, _y: i64, _size: i64, _color: String| {
-            // TODO: Send to MPV
+        move |text: String, _x: i64, _y: i64, _size: i64, _color: String| {
+            // Using OSD overlay for text is complex (requires rendering text to image or using ASS/OSD commands).
+            // MPV doesn't have a direct "draw text at x,y" command via IPC easily without ASS.
+            // A common workaround is `osd-overlay` with data.
+            // `overlay-add` expects a file or raw memory.
+
+            // Alternative: `show-text` but that's fleeting.
+            // Best bet: use `osd-overlay` command.
+            // id=1 for text overlay?
+            // command: ["osd-overlay", <id>, "none", <text>, <x>, <y>, <align>, <style>]
+            // This is actually not standard MPV IPC command, it depends on scripts usually.
+
+            // Standard MPV has `osd-msg` or `show-text`.
+            // But for persistent text, we might need a custom script or use `overlay-add` with generated image.
+            // Let's assume for now we use `show-text` with long duration or just log it as not fully supported.
+
+            // Or use `script-message-to osc show-message ...`
+
+            // Let's try to construct an ASS subtitle string and set it? No.
+
+            // Re-reading `mpv_client.rs`... it only has `add_overlay`.
+            // Let's implement `mpv_text` as a best-effort logging or `show-text` for now.
+            // Or maybe the user expects `osd-overlay` which is available in some mpv builds?
+            // Let's use `show-text` with 5 seconds duration.
+            let cmd = serde_json::json!({
+                "command": ["show-text", text, 5000, 1] // text, duration(ms), level
+            });
+            if let Err(e) = mpv_clone.send_command(cmd) {
+                tracing::error!(target: "slatron_node::rhai", "mpv_text failed: {}", e);
+            }
         },
     );
 
-    engine.register_fn("mpv_remove_overlay", |_id: i64| {
-        // TODO: Send to MPV
+    let mpv_clone = mpv.clone();
+    engine.register_fn("mpv_remove_overlay", move |id: i64| {
+        let cmd = serde_json::json!({
+            "command": ["overlay-remove", id]
+        });
+        if let Err(e) = mpv_clone.send_command(cmd) {
+            tracing::error!(target: "slatron_node::rhai", "mpv_remove_overlay failed: {}", e);
+        }
     });
 
+    // These need actual implementation or MPV queries
     engine.register_fn("get_video_width", || -> i64 { 1920 });
-
     engine.register_fn("get_video_height", || -> i64 { 1080 });
 }
 
-fn register_global_functions(engine: &mut Engine) {
-    engine.register_fn("mpv_set_loop", |_enabled: bool| {
-        // TODO: Send to MPV
+fn register_global_functions(
+    engine: &mut Engine,
+    mpv: std::sync::Arc<crate::mpv_client::MpvClient>,
+) {
+    let mpv_clone = mpv.clone();
+    engine.register_fn("mpv_set_loop", move |enabled: bool| {
+        // loop-file
+        let val = if enabled { "inf" } else { "no" };
+        let cmd = serde_json::json!({
+             "command": ["set_property", "loop-file", val]
+        });
+        if let Err(e) = mpv_clone.send_command(cmd) {
+            tracing::error!(target: "slatron_node::rhai", "mpv_set_loop failed: {}", e);
+        }
     });
 
-    engine.register_fn("get_content_duration", || -> f64 { 0.0 });
+    let mpv_clone = mpv.clone();
+    engine.register_fn("get_content_duration", move || -> f64 {
+        match mpv_clone.get_duration() {
+            Ok(d) => d,
+            Err(_) => 0.0,
+        }
+    });
 
     engine.register_fn("get_block_duration", || -> f64 { 0.0 });
 
-    engine.register_fn("get_playback_position", || -> f64 { 0.0 });
+    let mpv_clone = mpv.clone();
+    engine.register_fn("get_playback_position", move || -> f64 {
+        match mpv_clone.get_position() {
+            Ok(p) => p,
+            Err(_) => 0.0,
+        }
+    });
 
-    engine.register_fn("mpv_play", |_path: String| {
-        // TODO: Send to MPV
+    let mpv_clone = mpv.clone();
+    engine.register_fn("mpv_play", move |path: String| {
+        if let Err(e) = mpv_clone.play(&path, None, None) {
+            tracing::error!(target: "slatron_node::rhai", "mpv_play failed: {}", e);
+        }
     });
 }
 
@@ -155,7 +236,7 @@ pub fn execute_script_function(
     args: rhai::Map,
     mpv: std::sync::Arc<crate::mpv_client::MpvClient>,
 ) -> Result<(), String> {
-    let mut engine = create_engine("transformer");
+    let mut engine = create_engine("transformer", Some(mpv.clone()));
 
     // Register mpv_send
     let mpv_clone = mpv.clone();
@@ -293,3 +374,6 @@ pub fn execute_script_function(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
