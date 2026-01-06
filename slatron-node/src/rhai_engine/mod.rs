@@ -89,6 +89,141 @@ fn register_content_loader_functions(engine: &mut Engine) {
     engine.register_fn("get_env", |key: String| -> String {
         std::env::var(&key).unwrap_or_default()
     });
+
+    engine.register_fn("http_post", |url: String, headers: rhai::Map, body: String| -> String {
+         use std::process::Command;
+         // Warning: Synchronous blocking call in main loop.
+         tracing::warn!(target: "slatron_node::rhai", "Blocking http_post called for {}", url);
+
+         let mut cmd = Command::new("curl");
+         cmd.arg("-X").arg("POST");
+         cmd.arg("-d").arg(&body);
+
+         for (k, v) in headers {
+             let val_str = v.to_string();
+             // headers might need to be "Key: Value"
+             // Remove quotes if rhai stringified them
+             let clean_val = val_str.trim_matches('"');
+             cmd.arg("-H").arg(format!("{}: {}", k, clean_val));
+         }
+
+         cmd.arg(&url);
+
+         match cmd.output() {
+             Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
+             Err(e) => format!("Error: {}", e),
+         }
+    });
+
+    engine.register_fn("generate_gemini_tts", |api_key: String, text: String, voice_name: String, output_path: String| -> String {
+        // Implementation of the curl command provided by user
+        let json_body = serde_json::json!({
+            "contents": [{
+                "parts":[{
+                    "text": text
+                }]
+            }],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {
+                    "voiceConfig": {
+                        "prebuiltVoiceConfig": {
+                            "voiceName": voice_name
+                        }
+                    }
+                }
+            },
+            "model": "gemini-2.5-flash-preview-tts",
+        });
+
+        let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent";
+
+        // 1. Curl to get base64
+        use std::process::Command;
+        let output = Command::new("curl")
+            .arg(url)
+            .arg("-H").arg(format!("x-goog-api-key: {}", api_key))
+            .arg("-X").arg("POST")
+            .arg("-H").arg("Content-Type: application/json")
+            .arg("-d").arg(json_body.to_string())
+            .output();
+
+        match output {
+            Ok(out) => {
+                if !out.status.success() {
+                    let err = String::from_utf8_lossy(&out.stderr);
+                    tracing::error!(target: "slatron_node::rhai", "Gemini API failed: {}", err);
+                    return format!("Error: API call failed");
+                }
+                let resp_str = String::from_utf8_lossy(&out.stdout);
+                // Parse JSON to get inlineData.data
+                 match serde_json::from_str::<serde_json::Value>(&resp_str) {
+                    Ok(v) => {
+                        if let Some(b64_data) = v.pointer("/candidates/0/content/parts/0/inlineData/data") {
+                            if let Some(s) = b64_data.as_str() {
+                                // Decode base64
+                                // We can use base64 crate if available, or just pipe to base64 --decode
+                                // Let's try to write to a temp file and use shell for decoding + ffmpeg
+
+                                // Clean up any existing temp files
+                                let tmp_pcm = format!("{}.pcm", output_path);
+                                let tmp_b64 = format!("{}.b64", output_path);
+
+                                if let Err(e) = std::fs::write(&tmp_b64, s) {
+                                     return format!("Error writing b64: {}", e);
+                                }
+
+                                // base64 decode
+                                let b64_file = std::fs::File::open(&tmp_b64);
+                                let pcm_file = std::fs::File::create(&tmp_pcm);
+
+                                match (b64_file, pcm_file) {
+                                    (Ok(input), Ok(output)) => {
+                                        let status = Command::new("base64")
+                                            .arg("--decode")
+                                            .stdin(std::process::Stdio::from(input))
+                                            .stdout(std::process::Stdio::from(output))
+                                            .status();
+
+                                        if let Err(e) = status {
+                                             return format!("Error executing base64: {}", e);
+                                        }
+                                    },
+                                    (Err(e), _) | (_, Err(e)) => return format!("Error opening files: {}", e),
+                                }
+
+                                // ffmpeg
+                                // ffmpeg -f s16le -ar 24000 -ac 1 -i out.pcm out.wav
+                                // -y to overwrite
+                                let status = Command::new("ffmpeg")
+                                    .arg("-y")
+                                    .arg("-f").arg("s16le")
+                                    .arg("-ar").arg("24000")
+                                    .arg("-ac").arg("1")
+                                    .arg("-i").arg(&tmp_pcm)
+                                    .arg(&output_path)
+                                    .status();
+
+                                if let Err(e) = status {
+                                    return format!("Error executing ffmpeg: {}", e);
+                                }
+
+                                // Cleanup
+                                let _ = std::fs::remove_file(tmp_b64);
+                                let _ = std::fs::remove_file(tmp_pcm);
+
+                                return "OK".to_string();
+                            }
+                        }
+                        tracing::error!(target: "slatron_node::rhai", "Gemini response missing data: {}", resp_str);
+                        "Error: Invalid response structure".to_string()
+                    },
+                    Err(e) => format!("Error parsing JSON: {}", e)
+                 }
+            },
+            Err(e) => format!("Error executing curl: {}", e)
+        }
+    });
 }
 
 fn register_overlay_functions(
@@ -197,10 +332,36 @@ fn register_global_functions(
     });
 
     let mpv_clone = mpv.clone();
+    engine.register_fn("get_time_remaining", move || -> f64 {
+        match (mpv_clone.get_duration(), mpv_clone.get_position()) {
+            (Ok(d), Ok(p)) => (d - p).max(0.0),
+            _ => 0.0,
+        }
+    });
+
+    let mpv_clone = mpv.clone();
     engine.register_fn("mpv_play", move |path: String| {
         if let Err(e) = mpv_clone.play(&path, None, None) {
             tracing::error!(target: "slatron_node::rhai", "mpv_play failed: {}", e);
         }
+    });
+
+    // Independent of MPV instance, we use a fire-and-forget process for audio overlay to ensure mixing
+    // via the OS audio mixer (PulseAudio/PipeWire/ALSA dmix).
+    // Using a separate MPV instance is the most reliable way to "play over" without complex graph manipulation.
+    engine.register_fn("play_audio_overlay", move |path: String| {
+        // We use "mpv" command assuming it's in PATH.
+        // We use --no-video to ensure it's audio only.
+        use std::process::Command;
+
+        // Spawn asynchronous child process
+        match Command::new("mpv")
+            .arg("--no-video")
+            .arg(&path)
+            .spawn() {
+                Ok(_) => tracing::info!(target: "slatron_node::rhai", "Spawned overlay audio: {}", path),
+                Err(e) => tracing::error!(target: "slatron_node::rhai", "Failed to spawn overlay audio: {}", e),
+            }
     });
 }
 
@@ -235,8 +396,29 @@ pub fn execute_script_function(
     settings: &mut rhai::Map,
     args: rhai::Map,
     mpv: std::sync::Arc<crate::mpv_client::MpvClient>,
+    dj_content: Option<Vec<crate::ServerContentItem>>,
 ) -> Result<(), String> {
     let mut engine = create_engine("transformer", Some(mpv.clone()));
+
+    // Register get_dj_content if available
+    if let Some(content) = dj_content {
+        // We need to convert ServerContentItem to something rhai likes (Map)
+        let mut rhai_content = Vec::new();
+        for item in content {
+            let mut map = rhai::Map::new();
+            map.insert("id".into(), rhai::Dynamic::from(item.id as i64));
+            map.insert("path".into(), rhai::Dynamic::from(item.content_path));
+            rhai_content.push(rhai::Dynamic::from(map));
+        }
+
+        engine.register_fn("get_dj_content", move || -> Vec<rhai::Dynamic> {
+            rhai_content.clone()
+        });
+    } else {
+         engine.register_fn("get_dj_content", || -> Vec<rhai::Dynamic> {
+            Vec::new()
+        });
+    }
 
     // Register mpv_send
     let mpv_clone = mpv.clone();

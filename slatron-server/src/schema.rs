@@ -14,6 +14,7 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         transformer_scripts -> Nullable<Text>,
+        is_dj_accessible -> Bool,
     }
 }
 

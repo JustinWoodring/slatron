@@ -232,7 +232,9 @@ pub async fn get_node_schedule(
     State(state): State<AppState>,
     Path(query_node_id): Path<i32>,
 ) -> Result<Json<NodeScheduleResponse>, StatusCode> {
-    use crate::schema::content_items::dsl::{content_items, id as content_item_id};
+    use crate::schema::content_items::dsl::{
+        content_items, id as content_item_id, is_dj_accessible,
+    };
     use crate::schema::schedules::dsl::{is_active, priority, schedules};
     use crate::schema::scripts::dsl::{id as script_id_col, scripts};
     use crate::services::schedule_service;
@@ -305,11 +307,15 @@ pub async fn get_node_schedule(
         })
         .collect();
 
-    // 3. Fetch Content Items referenced by the blocks
+    // 3. Fetch Content Items referenced by the blocks OR marked as DJ accessible
     let content_ids: Vec<i32> = blocks.iter().filter_map(|b| b.content_id).collect();
 
     let content_list = content_items
-        .filter(content_item_id.eq_any(content_ids))
+        .filter(
+            content_item_id
+                .eq_any(content_ids)
+                .or(is_dj_accessible.eq(true)),
+        )
         .select(crate::models::ContentItem::as_select())
         .load::<crate::models::ContentItem>(&mut conn)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

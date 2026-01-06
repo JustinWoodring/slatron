@@ -218,6 +218,7 @@ pub struct ContentItem {
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
     pub transformer_scripts: Option<String>,
+    pub is_dj_accessible: bool,
 }
 
 #[derive(Debug, Insertable, Deserialize)]
@@ -232,6 +233,8 @@ pub struct NewContentItem {
     pub tags: Option<String>,
     pub node_accessibility: Option<String>,
     pub transformer_scripts: Option<String>,
+    #[serde(default)]
+    pub is_dj_accessible: bool,
 }
 
 // Script models
