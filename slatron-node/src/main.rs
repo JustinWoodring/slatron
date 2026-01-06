@@ -688,7 +688,16 @@ async fn playback_loop(state: NodeState) {
                         }
                     }
 
-                    if let Err(e) = state.mpv.play(path, start_secs, loop_enabled) {
+                    // Check for path override
+                    let mut final_path = path.clone();
+                    if let Some(path_val) = settings.get("path") {
+                        if let Ok(p) = path_val.clone().into_string() {
+                            tracing::info!("Overriding playback path with: {}", p);
+                            final_path = p;
+                        }
+                    }
+
+                    if let Err(e) = state.mpv.play(&final_path, start_secs, loop_enabled) {
                         tracing::error!("Failed to play content: {}", e);
                     } else {
                         // Update current content ID so heartbeat can see it

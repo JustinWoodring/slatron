@@ -89,6 +89,58 @@ fn register_content_loader_functions(engine: &mut Engine) {
     engine.register_fn("get_env", |key: String| -> String {
         std::env::var(&key).unwrap_or_default()
     });
+
+    engine.register_fn("capture_website", |url: String, output: String| -> String {
+        // This expects the `screenshot.js` tool to be in a specific location or configurable
+        // For now we assume `tools/screenshot.js` relative to current dir or absolute path
+        use std::process::Command;
+
+        // Find screenshot script path
+        let script_path = if std::path::Path::new("slatron-node/tools/screenshot.js").exists() {
+             "slatron-node/tools/screenshot.js"
+        } else if std::path::Path::new("tools/screenshot.js").exists() {
+             "tools/screenshot.js"
+        } else {
+             // Fallback or error
+             "screenshot.js"
+        };
+
+        // Expand output path
+        let expanded_output = if output.starts_with("~/") {
+            if let Ok(home) = std::env::var("HOME") {
+                output.replacen("~", &home, 1)
+            } else {
+                output
+            }
+        } else {
+             output
+        };
+
+        tracing::info!(target: "slatron_node::rhai", "Capturing website {} to {}", url, expanded_output);
+
+        let output_res = Command::new("node")
+            .arg(script_path)
+            .arg(&url)
+            .arg(&expanded_output)
+            .output();
+
+        match output_res {
+            Ok(output_data) => {
+                if output_data.status.success() {
+                    tracing::info!(target: "slatron_node::rhai", "Screenshot success");
+                    expanded_output
+                } else {
+                     let err = String::from_utf8_lossy(&output_data.stderr);
+                     tracing::error!(target: "slatron_node::rhai", "Screenshot failed: {}", err);
+                     format!("Error: {}", err)
+                }
+            }
+            Err(e) => {
+                 tracing::error!(target: "slatron_node::rhai", "Failed to execute node script: {}", e);
+                 format!("Error: {}", e)
+            }
+        }
+    });
 }
 
 fn register_overlay_functions(
@@ -226,6 +278,11 @@ fn register_transformer_functions(engine: &mut Engine) {
     // settings.end_time = 20.0
     engine.register_fn("set_end_time", |ctx: &mut rhai::Map, seconds: f64| {
         ctx.insert("end_time".into(), rhai::Dynamic::from(seconds));
+    });
+
+    // settings.path = "..."
+    engine.register_fn("set_path", |ctx: &mut rhai::Map, path: String| {
+        ctx.insert("path".into(), rhai::Dynamic::from(path));
     });
 }
 
