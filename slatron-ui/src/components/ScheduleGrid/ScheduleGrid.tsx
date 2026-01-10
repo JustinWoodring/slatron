@@ -7,6 +7,7 @@ import { ScheduleBlock, DraggableScheduleBlock, BlockData } from './ScheduleBloc
 import { TimeAxis } from './TimeAxis';
 import { useScheduleStore } from '../../stores/scheduleStore';
 import { useContentStore } from '../../stores/contentStore';
+import { useDjStore } from '../../stores/djStore';
 import { snapCenterToCursor } from '@dnd-kit/modifiers'
 
 // Helper to get minutes from midnight in target timezone
@@ -35,7 +36,7 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 // Separate component for DayColumn to use hooks
 const DayColumn = ({
-    dayIndex, blocks, pixelsPerMinute, onBlockClick, getTopOffset, handleColumnClick, readOnly
+    dayIndex, blocks, pixelsPerMinute, onBlockClick, getTopOffset, handleColumnClick, readOnly, isToday
 }: {
     dayIndex: number;
     blocks: BlockData[];
@@ -44,6 +45,7 @@ const DayColumn = ({
     getTopOffset: (startTime: string) => number;
     handleColumnClick: (e: React.MouseEvent, dayIndex: number) => void;
     readOnly?: boolean;
+    isToday?: boolean;
 }) => {
     const { setNodeRef } = useDroppable({
         id: `day-${dayIndex}`,
@@ -53,7 +55,7 @@ const DayColumn = ({
     return (
         <div
             ref={setNodeRef}
-            className={`flex-1 relative border-r border-[var(--border-color)]/30 last:border-r-0 h-full ${readOnly ? 'cursor-default' : 'cursor-cell'}`}
+            className={`flex-1 relative border-r border-[var(--border-color)]/30 last:border-r-0 h-full ${readOnly ? 'cursor-default' : 'cursor-cell'} ${isToday ? 'bg-indigo-500/5' : ''}`}
             onClick={(e) => !readOnly && handleColumnClick(e, dayIndex)}
         >
             <div className="relative w-full h-full">
@@ -114,15 +116,26 @@ export const ScheduleGrid = ({
 
     const { blocks } = useScheduleStore();
     const { content } = useContentStore();
+    const { djs } = useDjStore();
 
     // Enrich blocks with content titles
     const enrichedBlocks = React.useMemo(() => {
-        return blocks.map(b => ({
-            ...b,
-            title: content.find(c => c.id === b.content_id)?.title || (b.content_id ? `Content #${b.content_id}` : 'Untitled Event'),
-            type: 'video' // Default
-        } as BlockData));
-    }, [blocks, content]);
+        return blocks.map(b => {
+            let title = 'Untitled Event';
+            if (b.content_id) {
+                title = content.find(c => c.id === b.content_id)?.title || `Content #${b.content_id}`;
+            } else if (b.dj_id) {
+                const dj = djs.find(d => d.id === b.dj_id);
+                title = dj ? `DJ: ${dj.name}` : `DJ #${b.dj_id}`;
+            }
+
+            return {
+                ...b,
+                title,
+                type: b.dj_id ? 'live' : 'video' // Use 'live' style for DJ components
+            } as BlockData
+        });
+    }, [blocks, content, djs]);
 
     const gridHeight = 24 * 60 * pixelsPerMinute;
 
@@ -132,6 +145,23 @@ export const ScheduleGrid = ({
     };
 
     const currentMinutes = getWallMinutesInTimezone(now, timezone);
+
+    const currentDayIndex = React.useMemo(() => {
+        try {
+            // Get day of week (0-6) in target timezone
+            // Monday=0, Sunday=6 to match DAYS array ['Mon'...'Sun']
+            const parts = new Intl.DateTimeFormat('en-US', {
+                timeZone: timezone,
+                weekday: 'short'
+            }).formatToParts(now);
+            const weekday = parts.find(p => p.type === 'weekday')?.value;
+            // Map short weekday to index
+            const map: Record<string, number> = { 'Mon': 0, 'Tue': 1, 'Wed': 2, 'Thu': 3, 'Fri': 4, 'Sat': 5, 'Sun': 6 };
+            return weekday ? map[weekday] : -1;
+        } catch {
+            return -1;
+        }
+    }, [now, timezone]);
 
     const handleColumnClick = (e: React.MouseEvent, dayIndex: number) => {
         if (!onGridClick || readOnly) return;
@@ -161,9 +191,9 @@ export const ScheduleGrid = ({
                         <span className="text-xs text-[var(--text-secondary)] font-medium">Time</span>
                     </div>
                     <div className="flex-1 flex">
-                        {DAYS.map(day => (
-                            <div key={day} className="flex-1 p-2 text-center border-r border-[var(--border-color)] last:border-r-0">
-                                <span className="text-sm font-bold text-white tracking-wider">{day}</span>
+                        {DAYS.map((day, idx) => (
+                            <div key={day} className={`flex-1 p-2 text-center border-r border-[var(--border-color)] last:border-r-0 ${idx === currentDayIndex ? 'bg-indigo-500/20 text-indigo-200' : ''}`}>
+                                <span className={`text-sm font-bold tracking-wider ${idx === currentDayIndex ? 'text-indigo-300' : 'text-white'}`}>{day}</span>
                             </div>
                         ))}
                     </div>
@@ -189,8 +219,8 @@ export const ScheduleGrid = ({
                         </div>
 
                         {/* Current Time Ticker (Wall Time) */}
-                        <div className="absolute w-full pointer-events-none z-20 border-t-2 border-red-500" style={{ top: currentMinutes * pixelsPerMinute }}>
-                            <span className="absolute -top-3 left-0 bg-red-500 text-white text-[10px] px-1 rounded-r shadow-sm font-mono">
+                        <div className="absolute w-full pointer-events-none z-20 border-t-2 border-red-500/50" style={{ top: currentMinutes * pixelsPerMinute }}>
+                            <span className="absolute -top-3 left-0 bg-red-500 text-white text-[10px] px-1 rounded-r shadow-sm font-mono opacity-80">
                                 {timezone.split('/').pop()?.replace(/_/g, ' ') || 'Local'}
                             </span>
                         </div>
@@ -205,6 +235,8 @@ export const ScheduleGrid = ({
                                 onBlockClick={onBlockClick}
                                 getTopOffset={getTopOffset}
                                 handleColumnClick={handleColumnClick}
+                                readOnly={readOnly}
+                                isToday={dayIndex === currentDayIndex}
                             />
                         ))}
 

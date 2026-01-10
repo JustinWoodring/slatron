@@ -13,9 +13,12 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
     const { scripts, fetchScripts, executeScript } = useScriptStore()
 
     // UI State
-    const [mode, setMode] = useState<'manual' | 'loader'>('manual')
+    const [mode, setMode] = useState<'manual' | 'loader' | 'bulk_review' | 'import_report'>('manual')
     const [isLoading, setIsLoading] = useState(false)
     const [loaderError, setLoaderError] = useState<string | null>(null)
+    const [foundItems, setFoundItems] = useState<any[]>([])
+    const [importProgress, setImportProgress] = useState<{ current: number, total: number } | null>(null)
+    const [importResults, setImportResults] = useState<{ success: number, failed: number, errors: string[] } | null>(null)
 
     // Loader State
     const [selectedScriptId, setSelectedScriptId] = useState<number | undefined>()
@@ -30,6 +33,7 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
         duration_minutes: 0,
         tags: '',
         node_accessibility: 'public',
+        is_dj_accessible: false,
         adapter_id: undefined as number | undefined,
         transformer_scripts: [] as { id: number, args: Record<string, any> }[]
     })
@@ -55,6 +59,7 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
                     duration_minutes: editingContent.duration_minutes || 0,
                     tags: editingContent.tags || '',
                     node_accessibility: editingContent.node_accessibility || 'public',
+                    is_dj_accessible: editingContent.is_dj_accessible || false,
                     adapter_id: undefined, // TODO: Handle adapter_id if present in ContentItem
                     transformer_scripts: transformers.map(t => {
                         if (typeof t === 'number') return { id: t, args: {} }
@@ -71,6 +76,7 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
                     duration_minutes: 0,
                     tags: '',
                     node_accessibility: 'public',
+                    is_dj_accessible: false,
                     adapter_id: undefined,
                     transformer_scripts: []
                 })
@@ -89,6 +95,7 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
             duration_minutes: 0,
             tags: '',
             node_accessibility: 'public',
+            is_dj_accessible: false,
             adapter_id: undefined,
             transformer_scripts: []
         })
@@ -96,6 +103,9 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
         setSelectedScriptId(undefined)
         setScriptParams('{}')
         setLoaderError(null)
+        setFoundItems([])
+        setImportProgress(null)
+        setImportResults(null)
     }
 
     const handleClose = () => {
@@ -122,17 +132,28 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
                 try {
                     const data = JSON.parse(res.result)
 
-                    setFormData(prev => ({
-                        ...prev,
-                        title: data.title || prev.title,
-                        description: data.description || prev.description,
-                        content_path: data.path || data.url || prev.content_path,
-                        duration_minutes: data.duration || prev.duration_minutes,
-                        content_type: data.type || (data.path ? 'local_file' : 'remote_url')
-                    }))
-                    setMode('manual')
+                    if (Array.isArray(data)) {
+                        // Bulk Import Mode
+                        if (data.length === 0) {
+                            setLoaderError("Script returned an empty list.")
+                            return
+                        }
+                        setFoundItems(data)
+                        setMode('bulk_review')
+                    } else {
+                        // Single Item Mode
+                        setFormData(prev => ({
+                            ...prev,
+                            title: data.title || prev.title,
+                            description: data.description || prev.description,
+                            content_path: data.path || data.url || prev.content_path,
+                            duration_minutes: data.duration_minutes || data.duration || prev.duration_minutes, // Fix: support duration_minutes key
+                            content_type: data.type || (data.path || data.url ? 'remote_url' : 'local_file') // Improve type detection
+                        }))
+                        setMode('manual')
+                    }
                 } catch (e) {
-                    setLoaderError("Failed to parse script output. Ensure script returns a JSON string.")
+                    setLoaderError("Failed to parse script output. Ensure script returns a valid JSON string.")
                 }
             } else {
                 setLoaderError(res.error || "Execution failed")
@@ -144,6 +165,57 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
         }
     }
 
+    const handleBulkImport = async () => {
+        if (foundItems.length === 0) return
+        setIsLoading(true)
+        setImportProgress({ current: 0, total: foundItems.length })
+
+        let successCount = 0
+        let failures: string[] = []
+
+        for (let i = 0; i < foundItems.length; i++) {
+            const item = foundItems[i]
+            try {
+                // Map script item to content data
+                const data = {
+                    title: item.title || "Untitled",
+                    description: item.description || null,
+                    content_type: item.content_type || item.type || (item.content_path || item.url ? 'remote_url' : 'local_file'),
+                    content_path: item.content_path || item.url || item.path || "",
+                    duration_minutes: Math.round(item.duration_minutes || item.duration || 0),
+                    tags: item.tags || null,
+                    node_accessibility: 'public',
+                    is_dj_accessible: false, // Default for bulk import
+                    transformer_scripts: null,
+                    adapter_id: undefined
+                }
+
+                if (!data.content_path) {
+                    failures.push(`Item "${data.title}": Missing content path`)
+                    continue;
+                }
+
+                await createContent(data as any)
+                successCount++
+            } catch (e: any) {
+                console.error(`Failed to import item ${i}`, e)
+                const msg = e.response?.data?.error || e.message || "Unknown error"
+                failures.push(`Item "${item.title || i}": ${msg}`)
+            }
+            setImportProgress({ current: i + 1, total: foundItems.length })
+        }
+
+        setIsLoading(false)
+        setImportProgress(null)
+
+        setImportResults({
+            success: successCount,
+            failed: failures.length,
+            errors: failures
+        })
+        setMode('import_report')
+    }
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         try {
@@ -153,6 +225,7 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
                 description: formData.description || null,
                 tags: formData.tags || null,
                 node_accessibility: formData.node_accessibility || null,
+                is_dj_accessible: formData.is_dj_accessible,
                 transformer_scripts: formData.transformer_scripts.length > 0
                     ? JSON.stringify(formData.transformer_scripts)
                     : null
@@ -185,17 +258,82 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
                     </button>
                     <button
                         onClick={() => setMode('loader')}
-                        className={`flex-1 py-4 text-sm font-medium transition-colors ${mode === 'loader' ? 'text-emerald-400 border-b-2 border-emerald-400 bg-[var(--bg-tertiary)]' : 'text-[var(--text-secondary)] hover:text-white'}`}
+                        className={`flex-1 py-4 text-sm font-medium transition-colors ${mode === 'loader' || mode === 'bulk_review' ? 'text-emerald-400 border-b-2 border-emerald-400 bg-[var(--bg-tertiary)]' : 'text-[var(--text-secondary)] hover:text-white'}`}
                     >
                         Import via Script
                     </button>
                 </div>
 
                 <div className="p-6 overflow-y-auto custom-scrollbar">
-                    {mode === 'loader' ? (
+                    {mode === 'bulk_review' ? (
+                        <div className="space-y-4">
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-white font-medium">Review Import ({foundItems.length} items)</h3>
+                                <button onClick={() => setMode('loader')} className="text-xs text-[var(--text-secondary)] hover:text-white">
+                                    Back to Loader
+                                </button>
+                            </div>
+
+                            <div className="bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg overflow-hidden max-h-64 overflow-y-auto custom-scrollbar">
+                                <table className="w-full text-left text-sm text-[var(--text-secondary)]">
+                                    <thead className="bg-[#1e1e1e] sticky top-0">
+                                        <tr>
+                                            <th className="p-2 font-medium text-xs uppercase">Title</th>
+                                            <th className="p-2 font-medium text-xs uppercase text-right">Dur (m)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-[var(--border-color)]">
+                                        {foundItems.map((item, idx) => (
+                                            <tr key={idx} className="hover:bg-white/5">
+                                                <td className="p-2 truncate max-w-[200px]" title={item.title}>{item.title}</td>
+                                                <td className="p-2 text-right font-mono text-xs">
+                                                    {(item.duration_minutes || item.duration || 0).toFixed(1)}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {importProgress && (
+                                <div className="space-y-1">
+                                    <div className="flex justify-between text-xs text-[var(--text-secondary)]">
+                                        <span>Importing...</span>
+                                        <span>{importProgress.current} / {importProgress.total}</span>
+                                    </div>
+                                    <div className="w-full bg-[var(--bg-primary)] rounded-full h-1.5">
+                                        <div
+                                            className="bg-emerald-500 h-1.5 rounded-full transition-all duration-300"
+                                            style={{ width: `${(importProgress.current / importProgress.total) * 100}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex justify-end gap-3 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={handleClose}
+                                    disabled={isLoading}
+                                    className="px-4 py-2 text-sm text-[var(--text-secondary)] hover:text-white transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleBulkImport}
+                                    disabled={isLoading}
+                                    className="btn-primary flex items-center gap-2"
+                                >
+                                    {isLoading && <span className="animate-spin text-white">⟳</span>}
+                                    Import All
+                                </button>
+                            </div>
+                        </div>
+                    ) : mode === 'loader' ? (
                         <div className="space-y-4">
                             <p className="text-sm text-[var(--text-secondary)]">
-                                Run a content loader script to automatically fetch metadata and fill the form.
+                                Run a content loader script. If it returns a list, you can bulk import.
                             </p>
 
                             <div>
@@ -297,6 +435,54 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
                                 </button>
                             </div>
                         </div>
+                    ) : mode === 'import_report' && importResults ? (
+                        <div className="space-y-4">
+                            <div className="text-center py-4">
+                                {importResults.failed === 0 ? (
+                                    <div className="text-emerald-400 mb-2">
+                                        <svg className="w-12 h-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        <h3 className="text-lg font-medium mt-2">Import Successful</h3>
+                                    </div>
+                                ) : (
+                                    <div className="text-amber-400 mb-2">
+                                        <svg className="w-12 h-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                        </svg>
+                                        <h3 className="text-lg font-medium mt-2">Import Completed with Errors</h3>
+                                    </div>
+                                )}
+                                <p className="text-[var(--text-secondary)]">
+                                    Successfully imported <strong>{importResults.success}</strong> items.
+                                    <br />
+                                    Failed to import <strong>{importResults.failed}</strong> items.
+                                </p>
+                            </div>
+
+                            {importResults.failed > 0 && (
+                                <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4">
+                                    <h4 className="text-red-400 text-sm font-medium mb-2">Failures</h4>
+                                    <div className="max-h-40 overflow-y-auto custom-scrollbar space-y-1">
+                                        {importResults.errors.map((err, idx) => (
+                                            <div key={idx} className="text-xs text-red-300 font-mono border-b border-red-500/10 pb-1 mb-1 last:border-0">
+                                                • {err}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex justify-center pt-2">
+                                <button
+                                    type="button"
+                                    onClick={handleClose}
+                                    className="btn-primary w-full"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </div>
                     ) : (
                         <form id="content-form" onSubmit={handleSubmit} className="space-y-4">
                             <div>
@@ -352,6 +538,19 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
                                     value={formData.content_path}
                                     onChange={e => setFormData({ ...formData, content_path: e.target.value })}
                                 />
+                            </div>
+
+                            <div className="flex items-center">
+                                <label className="flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        className="form-checkbox h-4 w-4 text-indigo-500 rounded border-[var(--border-color)] bg-[var(--bg-primary)] focus:ring-indigo-500"
+                                        checked={formData.is_dj_accessible}
+                                        onChange={e => setFormData({ ...formData, is_dj_accessible: e.target.checked })}
+                                    />
+                                    <span className="ml-2 text-sm text-white">DJ Accessible</span>
+                                </label>
+                                <span className="ml-2 text-xs text-[var(--text-secondary)]">(Allow AI DJs to pick this track)</span>
                             </div>
 
                             {/* Transformers Selection */}

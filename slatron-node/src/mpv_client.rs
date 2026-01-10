@@ -87,6 +87,22 @@ impl MpvClient {
         Ok(())
     }
 
+    pub fn queue(&self, path: &str) -> Result<()> {
+        // queue implies append to playlist.
+        // If nothing playing, it plays.
+        // "loadfile" "path" "append-play"
+        let args = vec![
+            "loadfile".to_string(),
+            path.to_string(),
+            "append-play".to_string(),
+        ];
+
+        self.send_command(json!({
+            "command": args
+        }))?;
+        Ok(())
+    }
+
     pub fn set_volume(&self, volume: f64) -> Result<()> {
         self.send_command(json!({
             "command": ["set_property", "volume", volume]
@@ -146,6 +162,37 @@ impl MpvClient {
 
         response["data"]
             .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("Invalid response"))
+    }
+
+    pub fn get_path(&self) -> Result<String> {
+        let response = self.send_command(json!({
+            "command": ["get_property", "path"]
+        }))?;
+
+        response["data"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("Invalid response or no path"))
+    }
+
+    pub fn is_paused(&self) -> Result<bool> {
+        let response = self.send_command(json!({
+            "command": ["get_property", "pause"]
+        }))?;
+
+        response["data"]
+            .as_bool()
+            .ok_or_else(|| anyhow::anyhow!("Invalid response"))
+    }
+
+    pub fn is_idle(&self) -> Result<bool> {
+        let response = self.send_command(json!({
+            "command": ["get_property", "idle-active"]
+        }))?;
+
+        response["data"]
+            .as_bool()
             .ok_or_else(|| anyhow::anyhow!("Invalid response"))
     }
 

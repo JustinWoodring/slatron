@@ -21,6 +21,7 @@ interface ScheduleBlock {
   start_time: string
   duration_minutes: number
   script_id: number | null
+  dj_id: number | null
 }
 
 interface ScheduleStore {

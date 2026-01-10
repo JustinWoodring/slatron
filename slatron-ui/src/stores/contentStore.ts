@@ -12,6 +12,7 @@ export interface ContentItem {
     node_accessibility: string | null
     created_at: string
     transformer_scripts: string | null
+    is_dj_accessible: boolean
 }
 
 interface ContentStore {

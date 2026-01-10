@@ -1,10 +1,13 @@
 import { useMemo, useEffect, useRef } from 'react'
+import { useDjStore } from '../../stores/djStore'
 
 interface ScheduleBlock {
     id: number
     start_time: string // UTC "HH:MM:SS"
     duration_minutes: number
-    content_id: number
+    content_id: number | null
+    dj_id?: number | null
+    dj_name?: string
     specific_date?: string
     source_schedule_name?: string
 }
@@ -29,6 +32,7 @@ interface EffectiveScheduleViewerProps {
 
 export function EffectiveScheduleViewer({ data, timezone, onClose }: EffectiveScheduleViewerProps) {
     const scrollRef = useRef<HTMLDivElement>(null)
+    const { djs } = useDjStore();
 
     // Helper: Convert UTC time string to target timezone time string (HH:MM)
     const formatTime = (timeStr: string, dateStr?: string) => {
@@ -122,7 +126,8 @@ export function EffectiveScheduleViewer({ data, timezone, onClose }: EffectiveSc
                     <div ref={scrollRef} className="divide-y divide-[var(--border-color)]/50">
                         {sortedBlocks.length > 0 ? (
                             sortedBlocks.map((block, index) => {
-                                const content = data.content.find(c => c.id === block.content_id)
+                                const content = block.content_id ? data.content.find(c => c.id === block.content_id) : null
+                                const dj = block.dj_id ? djs.find(d => d.id === block.dj_id) : null
                                 const isActive = index === activeBlockIndex
 
                                 return (
@@ -146,7 +151,10 @@ export function EffectiveScheduleViewer({ data, timezone, onClose }: EffectiveSc
                                         {/* Content Column */}
                                         <div className="col-span-6 flex flex-col gap-1">
                                             <div className={`font-medium ${isActive ? 'text-white' : 'text-gray-300'}`}>
-                                                {content?.title || `Unknown Content #${block.content_id}`}
+                                                {content
+                                                    ? content.title
+                                                    : (dj ? `DJ: ${dj.name}` : (block.dj_name ? `DJ: ${block.dj_name}` : (block.dj_id ? `DJ #${block.dj_id}` : `Unknown Content`)))
+                                                }
                                             </div>
                                             {/* Source Indicator */}
                                             <div className="text-[10px] uppercase font-bold tracking-wider text-[var(--text-secondary)] flex items-center gap-1">

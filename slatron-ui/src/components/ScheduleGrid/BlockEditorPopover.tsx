@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useContentStore } from '../../stores/contentStore'
 import { useScheduleStore } from '../../stores/scheduleStore'
+import { useDjStore } from '../../stores/djStore'
 import { ContentPickerModal } from './ContentPickerModal'
 
 interface BlockEditorPopoverProps {
@@ -13,6 +14,7 @@ interface BlockEditorPopoverProps {
 export function BlockEditorPopover({ blockId, onClose, position, readOnly = false }: BlockEditorPopoverProps) {
     const { blocks, updateBlock, deleteBlock, selectedScheduleId } = useScheduleStore()
     const { content, fetchContent } = useContentStore()
+    const { djs, fetchDjs } = useDjStore()
     const popoverRef = useRef<HTMLDivElement>(null)
 
     // Find the block from the store
@@ -22,20 +24,28 @@ export function BlockEditorPopover({ blockId, onClose, position, readOnly = fals
         day_of_week: 0,
         start_time: '',
         duration_minutes: 15,
-        content_id: '' as string | number
+        content_id: '' as string | number,
+        dj_id: '' as string | number
     })
+
+    const [blockType, setBlockType] = useState<'content' | 'dj'>('content')
 
     useEffect(() => {
         fetchContent()
+        fetchDjs()
     }, [])
 
     useEffect(() => {
         if (block) {
+            const type = block.content_id ? 'content' : (block.dj_id ? 'dj' : 'content')
+            setBlockType(type)
+
             setFormData({
                 day_of_week: block.day_of_week ?? 0,
                 start_time: block.start_time,
                 duration_minutes: block.duration_minutes,
-                content_id: block.content_id ?? ''
+                content_id: block.content_id ?? '',
+                dj_id: block.dj_id ?? ''
             })
         }
     }, [block])
@@ -126,12 +136,15 @@ export function BlockEditorPopover({ blockId, onClose, position, readOnly = fals
                 return
             }
 
-            await updateBlock(selectedScheduleId, block.id, {
+            const payload = {
                 ...formData,
                 start_time: startTime,
-                content_id: formData.content_id ? Number(formData.content_id) : null
+                content_id: blockType === 'content' && formData.content_id ? Number(formData.content_id) : null,
+                dj_id: blockType === 'dj' && formData.dj_id ? Number(formData.dj_id) : null
                 // schedule_id injected by store
-            })
+            }
+
+            await updateBlock(selectedScheduleId, block.id, payload)
             // Close after explicit save? Google Calendar closes.
             onClose()
         } catch (error: any) {
@@ -168,7 +181,7 @@ export function BlockEditorPopover({ blockId, onClose, position, readOnly = fals
             className="fixed z-50 w-96 bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl shadow-2xl animate-fade-in"
             style={getPositionStyle()}
         >
-            <div className="flex items-center justify-between p-4 border-b border-[var(--border-color)] bg-[var(--bg-tertiary)] rounded-t-xl">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--border-color)] bg-[var(--bg-tertiary)] rounded-t-xl" >
                 <h2 className="text-sm font-bold text-white max-w-[200px] truncate">{readOnly ? 'Event Details' : 'Edit Event'}</h2>
                 <button onClick={onClose} className="text-[var(--text-secondary)] hover:text-white">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -183,6 +196,33 @@ export function BlockEditorPopover({ blockId, onClose, position, readOnly = fals
                         {error}
                     </div>
                 )}
+
+                {/* Type Selection Tabs */}
+                {!readOnly && (
+                    <div className="flex bg-[var(--bg-primary)] p-1 rounded-lg">
+                        <button
+                            type="button"
+                            onClick={() => setBlockType('content')}
+                            className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${blockType === 'content'
+                                    ? 'bg-[var(--accent-primary)] text-white shadow-sm'
+                                    : 'text-[var(--text-secondary)] hover:text-white'
+                                }`}
+                        >
+                            Specific Content
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setBlockType('dj')}
+                            className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${blockType === 'dj'
+                                    ? 'bg-[var(--accent-primary)] text-white shadow-sm'
+                                    : 'text-[var(--text-secondary)] hover:text-white'
+                                }`}
+                        >
+                            DJ Block (Auto)
+                        </button>
+                    </div>
+                )}
+
                 {/* Day Selection */}
                 <div>
                     <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">Day</label>
@@ -223,30 +263,51 @@ export function BlockEditorPopover({ blockId, onClose, position, readOnly = fals
                     </div>
                 </div>
 
-                {/* Content Selection */}
-                <div>
-                    <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">Content</label>
+                {/* Conditional Inputs */}
+                {blockType === 'dj' && (
+                    <div className="animate-fade-in">
+                        <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">DJ Personality</label>
+                        <select
+                            className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg p-2 text-white text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            value={formData.dj_id}
+                            onChange={(e) => setFormData({ ...formData, dj_id: e.target.value })}
+                            disabled={readOnly}
+                        >
+                            <option value="">Select a DJ...</option>
+                            {djs.map((dj) => (
+                                <option key={dj.id} value={dj.id}>{dj.name}</option>
+                            ))}
+                        </select>
+                        <p className="mt-1 text-[10px] text-[var(--text-secondary)]">
+                            The DJ will automatically select music and patter based on their profile.
+                        </p>
+                    </div>
+                )}
 
-                    <button
-                        type="button"
-                        onClick={() => !readOnly && setIsContentPickerOpen(true)}
-                        className={`w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg p-2 text-left text-sm focus:outline-none focus:border-indigo-500 transition-colors flex items-center justify-between group ${readOnly ? 'opacity-50 cursor-not-allowed' : 'hover:bg-[var(--bg-tertiary)]'}`}
-                        disabled={readOnly}
-                    >
-                        <div className="truncate text-white">
-                            {formData.content_id ? (
-                                content.find(c => c.id == Number(formData.content_id))?.title || `Content #${formData.content_id}`
-                            ) : (
-                                <span className="text-[var(--text-secondary)] italic">Select content...</span>
+                {blockType === 'content' && (
+                    <div className="animate-fade-in">
+                        <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">Fixed Content</label>
+                        <button
+                            type="button"
+                            onClick={() => !readOnly && setIsContentPickerOpen(true)}
+                            className={`w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg p-2 text-left text-sm focus:outline-none focus:border-indigo-500 transition-colors flex items-center justify-between group ${readOnly ? 'opacity-50 cursor-not-allowed' : 'hover:bg-[var(--bg-tertiary)]'}`}
+                            disabled={readOnly}
+                        >
+                            <div className="truncate text-white">
+                                {formData.content_id ? (
+                                    content.find(c => c.id == Number(formData.content_id))?.title || `Content #${formData.content_id}`
+                                ) : (
+                                    <span className="text-[var(--text-secondary)] italic">Select content...</span>
+                                )}
+                            </div>
+                            {!readOnly && (
+                                <svg className="w-4 h-4 text-[var(--text-secondary)] group-hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
                             )}
-                        </div>
-                        {!readOnly && (
-                            <svg className="w-4 h-4 text-[var(--text-secondary)] group-hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
-                        )}
-                    </button>
-                </div>
+                        </button>
+                    </div>
+                )}
 
                 {!readOnly && (
                     <ContentPickerModal

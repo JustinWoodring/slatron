@@ -6,7 +6,7 @@ use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::heartbeat::HeartbeatManager;
-use crate::NodeState;
+use crate::{NodeState, ServerContentItem};
 
 // Server → Node messages
 #[derive(Debug, Serialize, Deserialize)]
@@ -38,11 +38,21 @@ pub enum NodeCommand {
     #[serde(rename = "seek")]
     Seek { position_secs: f64 },
     #[serde(rename = "load_content")]
-    LoadContent { content_id: i32 },
+    LoadContent {
+        content_id: i32,
+        path: Option<String>,
+    },
+    #[serde(rename = "queue_content")]
+    QueueContent {
+        content_id: i32,
+        path: Option<String>,
+    },
     #[serde(rename = "reload_schedule")]
     ReloadSchedule,
     #[serde(rename = "shutdown")]
     Shutdown,
+    #[serde(rename = "inject_audio")]
+    InjectAudio { url: String, mix: bool },
 }
 
 // Node → Server messages
@@ -58,6 +68,7 @@ pub enum NodeMessage {
     Heartbeat {
         current_content_id: Option<i32>,
         playback_position_secs: Option<f32>,
+        playback_duration_secs: Option<f32>,
         status: String,
         cpu_usage_percent: f64,
         memory_usage_mb: f64,
@@ -256,9 +267,72 @@ impl WebSocketClient {
                     tracing::error!("Failed to seek: {}", e);
                 }
             }
-            NodeCommand::LoadContent { content_id } => {
-                tracing::info!("Command: Load content {} (Not implemented)", content_id);
-                // Requires content path resolution
+            NodeCommand::LoadContent { content_id, path } => {
+                tracing::info!("Command: Load content {}", content_id);
+                // 1. Get Path from Cache OR provided Path
+                let path_opt = {
+                    let mut cache = self.state.content_cache.write().await;
+                    if let Some(p) = &path {
+                        // Upsert cache if path provided
+                        cache.insert(
+                            content_id,
+                            ServerContentItem {
+                                id: content_id,
+                                content_path: p.clone(),
+                                transformer_scripts: None, // No scripts for dynamic load? Or fetches later?
+                            },
+                        );
+                        Some(p.clone())
+                    } else {
+                        cache.get(&content_id).map(|c| c.content_path.clone())
+                    }
+                };
+
+                if let Some(p) = path_opt {
+                    tracing::info!("Playing content directly: {}", p);
+                    if let Err(e) = self.state.mpv.play(&p, None, None) {
+                        tracing::error!("Failed to play content via command: {}", e);
+                    } else {
+                        // 2. Update Current Content ID so heartbeat reports it
+                        *self.state.current_content_id.write().await = Some(content_id);
+                    }
+                } else {
+                    tracing::warn!(
+                        "Content ID {} not found in cache and no path provided",
+                        content_id
+                    );
+                }
+            }
+            NodeCommand::QueueContent { content_id, path } => {
+                tracing::info!("Command: Queue content {}", content_id);
+                // 1. Get Path from Cache OR provided Path
+                let path_opt = {
+                    let mut cache = self.state.content_cache.write().await;
+                    if let Some(p) = &path {
+                        // Upsert cache if path provided
+                        cache.insert(
+                            content_id,
+                            ServerContentItem {
+                                id: content_id,
+                                content_path: p.clone(),
+                                transformer_scripts: None,
+                            },
+                        );
+                        Some(p.clone())
+                    } else {
+                        cache.get(&content_id).map(|c| c.content_path.clone())
+                    }
+                };
+
+                if let Some(p) = path_opt {
+                    tracing::info!("Queuing content: {}", p);
+                    if let Err(e) = self.state.mpv.queue(&p) {
+                        tracing::error!("Failed to queue content via command: {}", e);
+                    }
+                    // Do NOT update current_content_id yet. Heartbeat reports what is PLAYING.
+                } else {
+                    tracing::warn!("Content ID {} not found in cache for queueing", content_id);
+                }
             }
             NodeCommand::ReloadSchedule => {
                 tracing::info!("Command: Reload schedule");
@@ -277,6 +351,13 @@ impl WebSocketClient {
                 }
 
                 std::process::exit(0);
+            }
+            NodeCommand::InjectAudio { url, mix: _ } => {
+                tracing::info!("Command: Inject Audio {}", url);
+                // Use the dedicated 'voice' MPV instance to allow mixing/overlay.
+                if let Err(e) = self.state.mpv_voice.play(&url, None, None) {
+                    tracing::error!("Failed to play injected audio on voice instance: {}", e);
+                }
             }
         }
 

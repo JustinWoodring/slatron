@@ -32,16 +32,30 @@ pub async fn auth_middleware(
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     // Fetch user from DB to ensure validity and get full details
-    let mut conn = state
-        .db
-        .get()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Fetch user from DB
+    let mut conn = match state.db.get() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Auth Middleware - Failed to get DB connection: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
 
-    let user = users
+    let user = match users
         .filter(id.eq(claims.user_id))
         .select(User::as_select())
         .first::<User>(&mut conn)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::error!(
+                "Auth Middleware - Failed to fetch user {}: {}",
+                claims.user_id,
+                e
+            );
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    };
 
     // Attach user (and claims) to request extensions
     request.extensions_mut().insert(claims);

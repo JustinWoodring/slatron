@@ -17,6 +17,31 @@ pub fn create_engine(script_type: &str) -> Engine {
         _ => {}
     }
 
+    engine.on_print(|x| {
+        tracing::info!("[SCRIPT] {}", x);
+    });
+
+    engine.on_debug(|x, src, pos| {
+        let src_str = src.unwrap_or("unknown");
+        tracing::info!("[SCRIPT DEBUG] {} @ {:?}: {}", src_str, pos, x);
+    });
+
+    // Override parse_json with serde_json for better compatibility (e.g. unicode escapes)
+    engine.register_fn("parse_json", |json: String| -> rhai::Dynamic {
+        match serde_json::from_str::<serde_json::Value>(&json) {
+            Ok(v) => rhai::serde::to_dynamic(&v).unwrap_or(rhai::Dynamic::UNIT),
+            Err(e) => {
+                tracing::error!("JSON Parse Error: {}", e);
+                // Return empty map on error to prevent crash, or maybe rethrow?
+                // Rhai parse_json usually throws.
+                // Let's print error and return format error string as Map for now, or just empty map.
+                // Better yet, throw exception if possible? But closure returns Dynamic.
+                // For now, logging and returning empty map is safer than crash.
+                rhai::Dynamic::UNIT
+            }
+        }
+    });
+
     engine
 }
 
@@ -24,10 +49,10 @@ fn register_content_loader_functions(engine: &mut Engine) {
     // Execute shell command
     engine.register_fn(
         "shell_execute",
-        |cmd: String, args: Vec<rhai::Dynamic>| -> String { run_shell_execute(cmd, args) },
+        |cmd: String, args: Vec<rhai::Dynamic>| -> rhai::Map { run_shell_execute(cmd, args) },
     );
     // Overload for single argument
-    engine.register_fn("shell_execute", |cmd: String| -> String {
+    engine.register_fn("shell_execute", |cmd: String| -> rhai::Map {
         run_shell_execute(cmd, vec![])
     });
 
@@ -43,14 +68,34 @@ fn register_content_loader_functions(engine: &mut Engine) {
                 .status();
 
             match status {
-                Ok(s) => s.success(),
-                Err(_) => false,
+                Ok(s) => {
+                    if s.success() {
+                        tracing::info!("Download successful: {} -> {}", url, output_path);
+                        true
+                    } else {
+                        tracing::error!(
+                            "Download failed: {} -> {}, exit code: {:?}",
+                            url,
+                            output_path,
+                            s.code()
+                        );
+                        false
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Download command failed to start: {}", e);
+                    false
+                }
             }
         },
     );
 
     engine.register_fn("get_env", |key: String| -> String {
         std::env::var(&key).unwrap_or_default()
+    });
+
+    engine.register_fn("to_json", |v: rhai::Dynamic| -> String {
+        serde_json::to_string(&v).unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e))
     });
 }
 
@@ -92,27 +137,57 @@ fn register_global_functions(engine: &mut Engine) {
     engine.register_fn("mpv_play", |_path: String| {
         // Placeholder
     });
+
+    engine.register_fn("to_json", |v: rhai::Dynamic| -> String {
+        serde_json::to_string(&v).unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e))
+    });
 }
 
-fn run_shell_execute(cmd: String, args: Vec<rhai::Dynamic>) -> String {
-    let mut command = std::process::Command::new(cmd);
+fn run_shell_execute(cmd: String, args: Vec<rhai::Dynamic>) -> rhai::Map {
+    let mut command = std::process::Command::new(&cmd);
 
+    let mut args_str = String::new();
     for arg in args {
-        command.arg(arg.to_string());
+        let s = arg.to_string();
+        args_str.push_str(&format!("{} ", s));
+        command.arg(s);
     }
+
+    tracing::info!("Executing Shell: {} {}", cmd, args_str);
+
+    let mut map = rhai::Map::new();
 
     match command.output() {
         Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if output.status.success() {
-                stdout.to_string()
-            } else {
-                format!("Error: {}\nStderr: {}", stdout, stderr)
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let code = output.status.code().unwrap_or(-1) as i64;
+
+            if !stdout.is_empty() {
+                tracing::debug!("Shell Stdout: {}", stdout);
             }
+            if !stderr.is_empty() {
+                tracing::warn!("Shell Stderr: {}", stderr);
+            }
+
+            if !output.status.success() {
+                tracing::error!("Shell Failed ({}): {}", code, stderr);
+            }
+
+            map.insert("code".into(), code.into());
+            map.insert("stdout".into(), stdout.into());
+            map.insert("stderr".into(), stderr.into());
         }
-        Err(e) => format!("Execution failed: {}", e),
+        Err(e) => {
+            let err_msg = format!("Execution failed: {}", e);
+            tracing::error!("Shell Spawn Failed: {}", err_msg);
+
+            map.insert("code".into(), (-1 as i64).into());
+            map.insert("stdout".into(), "".into());
+            map.insert("stderr".into(), err_msg.into());
+        }
     }
+    map
 }
 
 pub fn validate_script(script_content: &str, script_type: &str) -> Vec<String> {
@@ -134,7 +209,8 @@ pub fn execute_script(
     let mut scope = Scope::new();
 
     // Add params to scope
-    scope.push("params", params);
+    let params_dynamic: rhai::Dynamic = params.clone().into();
+    scope.push("params", params_dynamic.clone());
 
     // Inject Settings
     let mut settings_map = rhai::Map::new();
@@ -153,11 +229,45 @@ pub fn execute_script(
         }
     });
 
-    match engine.eval_with_scope::<rhai::Dynamic>(&mut scope, script_content) {
-        Ok(result) => {
-            let cmds = commands.lock().map(|c| c.clone()).unwrap_or_default();
-            Ok((result, cmds))
+    // Compile AST first
+    let ast = engine
+        .compile(script_content)
+        .map_err(|e| format!("Compilation error: {}", e))?;
+
+    // Run top-level statements (registers functions)
+    let mut result = engine
+        .eval_ast_with_scope::<rhai::Dynamic>(&mut scope, &ast)
+        .map_err(|e| format!("Top-level execution error: {}", e))?;
+
+    // If content_loader, try to call load_content()
+    if script_type == "content_loader" {
+        // Inspect AST for load_content function
+        let has_load_content = ast.iter_functions().find(|f| f.name == "load_content");
+
+        if let Some(f) = has_load_content {
+            let call_result = if f.params.len() == 1 {
+                tracing::info!("Executing 'load_content(params)'");
+                engine.call_fn::<rhai::Dynamic>(&mut scope, &ast, "load_content", (params_dynamic,))
+            } else {
+                tracing::info!("Executing 'load_content()'");
+                engine.call_fn::<rhai::Dynamic>(&mut scope, &ast, "load_content", ())
+            };
+
+            match call_result {
+                Ok(r) => {
+                    result = r;
+                }
+                Err(e) => {
+                    tracing::error!("Entry point execution failed: {}", e);
+                    return Err(format!("Entry point error: {}", e));
+                }
+            }
+        } else {
+            // Fallback to top-level result
+            tracing::debug!("Entry point 'load_content' not found, using top-level result");
         }
-        Err(e) => Err(format!("Execution error: {}", e)),
     }
+
+    let cmds = commands.lock().map(|c| c.clone()).unwrap_or_default();
+    Ok((result, cmds))
 }

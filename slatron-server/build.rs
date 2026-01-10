@@ -81,4 +81,50 @@ fn main() {
         }
         zip.finish().unwrap();
     }
+
+    #[cfg(feature = "ml-support")]
+    {
+        use std::env;
+        use std::fs::File;
+        use std::path::Path;
+        use walkdir::WalkDir;
+
+        println!("cargo:rerun-if-changed=data");
+
+        let data_dir = Path::new("data"); // Relative to slatron-server Cargo.toml
+        if !data_dir.exists() {
+            // Create dummy or panic?
+            // User expects build to fail if they want ML support but didn't provide model?
+            // Or we warn. Let's panic to be explicit.
+            panic!("'data' directory not found in slatron-server. Please create 'slatron-server/data' and place 'snac.onnx' inside it for ML support.");
+        }
+
+        let out_dir = env::var("OUT_DIR").unwrap();
+        let dest_path = Path::new(&out_dir).join("model_assets.zip");
+        let file = File::create(&dest_path).unwrap();
+
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::FileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored)
+            .unix_permissions(0o755);
+
+        let walk_dir = WalkDir::new(&data_dir);
+        for entry in walk_dir.into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path == data_dir {
+                continue;
+            }
+            let name = path.strip_prefix(&data_dir).unwrap();
+            let name_str = name.to_str().unwrap();
+
+            if path.is_dir() {
+                let _ = zip.add_directory(name_str, options);
+            } else {
+                zip.start_file(name_str, options).unwrap();
+                let mut f = File::open(path).unwrap();
+                std::io::copy(&mut f, &mut zip).unwrap();
+            }
+        }
+        zip.finish().unwrap();
+    }
 }

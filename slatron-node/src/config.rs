@@ -10,7 +10,13 @@ pub struct Config {
     pub heartbeat_interval_secs: u64,
     pub schedule_poll_interval_secs: u64,
     pub mpv_socket_path: String,
+    #[serde(default = "default_voice_socket")]
+    pub voice_mpv_socket_path: String,
     pub offline_mode_warning_hours: u64,
+}
+
+fn default_voice_socket() -> String {
+    "/tmp/mpv-socket-voice".to_string()
 }
 
 impl Config {
@@ -27,6 +33,7 @@ secret_key = "change-me"
 heartbeat_interval_secs = 5
 schedule_poll_interval_secs = 60
 mpv_socket_path = "/tmp/mpv-socket"
+voice_mpv_socket_path = "/tmp/mpv-socket-voice"
 offline_mode_warning_hours = 24
 "#
     }

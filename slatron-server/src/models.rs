@@ -55,6 +55,8 @@ pub struct Node {
     pub updated_at: NaiveDateTime,
     pub current_content_id: Option<i32>,
     pub playback_position_secs: Option<f32>,
+    pub playback_duration_secs: Option<f32>,
+    pub script_context: Option<String>,
 }
 
 mod ts_seconds {
@@ -133,6 +135,7 @@ pub struct Schedule {
     pub is_active: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub dj_id: Option<i32>,
 }
 
 #[derive(Debug, Insertable, Deserialize)]
@@ -143,6 +146,7 @@ pub struct NewSchedule {
     pub schedule_type: String,
     pub priority: i32,
     pub is_active: bool,
+    pub dj_id: Option<i32>,
 }
 
 #[derive(Debug, AsChangeset, Deserialize)]
@@ -162,6 +166,7 @@ pub struct UpdateSchedule {
     pub schedule_type: Option<String>,
     pub priority: Option<i32>,
     pub is_active: Option<bool>,
+    pub dj_id: Option<Option<i32>>,
 }
 
 // Schedule Block models
@@ -179,6 +184,7 @@ pub struct ScheduleBlock {
     pub script_id: Option<i32>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub dj_id: Option<i32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -199,6 +205,7 @@ pub struct NewScheduleBlock {
     pub start_time: NaiveTime,
     pub duration_minutes: i32,
     pub script_id: Option<i32>,
+    pub dj_id: Option<i32>,
 }
 
 // Content Item models
@@ -218,6 +225,7 @@ pub struct ContentItem {
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
     pub transformer_scripts: Option<String>,
+    pub is_dj_accessible: bool, // New field, default false in DB
 }
 
 #[derive(Debug, Insertable, Deserialize)]
@@ -232,6 +240,111 @@ pub struct NewContentItem {
     pub tags: Option<String>,
     pub node_accessibility: Option<String>,
     pub transformer_scripts: Option<String>,
+    pub is_dj_accessible: bool,
+}
+
+#[derive(Debug, AsChangeset, Deserialize)]
+#[diesel(table_name = crate::schema::content_items)]
+pub struct UpdateContentItem {
+    pub title: Option<String>,
+    pub description: Option<Option<String>>,
+    pub content_type: Option<String>,
+    pub content_path: Option<String>,
+    pub adapter_id: Option<Option<i32>>,
+    pub duration_minutes: Option<Option<i32>>,
+    pub tags: Option<Option<String>>,
+    pub node_accessibility: Option<Option<String>>,
+    pub transformer_scripts: Option<Option<String>>,
+    pub is_dj_accessible: Option<bool>,
+}
+
+// AI Provider models
+#[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
+#[diesel(table_name = crate::schema::ai_providers)]
+pub struct AiProvider {
+    pub id: Option<i32>,
+    pub name: String,
+    pub provider_type: String,
+    pub api_key: Option<String>,
+    pub endpoint_url: Option<String>,
+    pub model_name: Option<String>,
+    pub is_active: bool,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    pub provider_category: String,
+}
+
+#[derive(Debug, Insertable, Deserialize)]
+#[diesel(table_name = crate::schema::ai_providers)]
+pub struct NewAiProvider {
+    pub name: String,
+    pub provider_type: String,
+    pub api_key: Option<String>,
+    pub endpoint_url: Option<String>,
+    pub model_name: Option<String>,
+    pub is_active: bool,
+    pub provider_category: String,
+}
+
+// DJ Profile models
+#[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
+#[diesel(table_name = crate::schema::dj_profiles)]
+pub struct DjProfile {
+    pub id: Option<i32>,
+    pub name: String,
+    pub personality_prompt: String,
+    pub voice_config_json: String,
+    pub context_depth: i32,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    pub voice_provider_id: Option<i32>,
+    pub llm_provider_id: Option<i32>,
+    pub context_script_ids: Option<String>,
+    pub talkativeness: f32,
+}
+
+#[derive(Debug, Insertable, Deserialize)]
+#[diesel(table_name = crate::schema::dj_profiles)]
+pub struct NewDjProfile {
+    pub name: String,
+    pub personality_prompt: String,
+    pub voice_config_json: String,
+    pub context_depth: i32,
+    pub voice_provider_id: Option<i32>,
+    pub llm_provider_id: Option<i32>,
+    pub context_script_ids: Option<String>,
+    pub talkativeness: f32,
+}
+
+// DJ Memory models
+#[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
+#[diesel(table_name = crate::schema::dj_memories)]
+pub struct DjMemory {
+    pub id: Option<i32>,
+    pub dj_id: i32,
+    pub memory_type: String,
+    pub content: String,
+    pub importance_score: i32,
+    pub happened_at: NaiveDateTime,
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Insertable, Deserialize)]
+#[diesel(table_name = crate::schema::dj_memories)]
+pub struct NewDjMemory {
+    pub dj_id: i32,
+    pub memory_type: String,
+    pub content: String,
+    pub importance_score: i32,
+    pub happened_at: NaiveDateTime,
+}
+
+#[derive(Debug, AsChangeset, Deserialize)]
+#[diesel(table_name = crate::schema::dj_memories)]
+pub struct UpdateDjMemory {
+    pub content: Option<String>,
+    pub importance_score: Option<i32>,
+    pub memory_type: Option<String>,
 }
 
 // Script models

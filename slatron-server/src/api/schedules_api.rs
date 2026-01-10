@@ -29,6 +29,8 @@ pub struct CollapsedBlock {
     pub priority: i32,
     pub schedule_name: String,
     pub schedule_id: i32,
+    pub dj_id: Option<i32>,
+    pub dj_name: Option<String>,
 }
 
 pub async fn list_schedules(
@@ -293,6 +295,7 @@ pub async fn update_schedule_block(
             start_time.eq(updates.start_time),
             duration_minutes.eq(updates.duration_minutes),
             script_id.eq(updates.script_id),
+            dj_id.eq(updates.dj_id), // Added missing field
         ))
         .returning(ScheduleBlock::as_select())
         .get_result(&mut conn)

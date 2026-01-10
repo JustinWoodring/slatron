@@ -61,6 +61,35 @@ pub fn calculate_collapsed_schedule(
         }
     }
 
+    // Map Cache for DJ Names to avoid N+1
+    let mut dj_names_cache: HashMap<i32, String> = HashMap::new();
+
+    // Fetch relevant DJs
+    // First, collect all DJ IDs from all schedules in cache
+    let mut all_dj_ids = Vec::new();
+    for (_, blocks) in schedule_blocks_cache.iter() {
+        for b in blocks {
+            if let Some(did) = b.dj_id {
+                all_dj_ids.push(did);
+            }
+        }
+    }
+    all_dj_ids.sort();
+    all_dj_ids.dedup();
+
+    if !all_dj_ids.is_empty() {
+        use crate::schema::dj_profiles::dsl::*;
+        let fetched_djs = dj_profiles
+            .filter(id.eq_any(all_dj_ids))
+            .select((crate::schema::dj_profiles::dsl::id, name))
+            .load::<(Option<i32>, String)>(conn)?; // Load as Option<i32> because column is nullable
+        for (did_opt, dname) in fetched_djs {
+            if let Some(did) = did_opt {
+                dj_names_cache.insert(did, dname);
+            }
+        }
+    }
+
     // 4. Create a 1440-minute timeline (24 hours * 60 minutes) representing LOCAL DAY
     let mut timeline: Vec<Option<TimelineSlot>> = vec![None; 1440];
 
@@ -89,6 +118,9 @@ pub fn calculate_collapsed_schedule(
 
                     if local_secs >= start_secs_val && local_secs < end_secs {
                         // Found a match!
+                        let d_name = block
+                            .dj_id
+                            .and_then(|did| dj_names_cache.get(&did).cloned());
                         timeline[local_minute as usize] = Some(TimelineSlot {
                             content_id: block.content_id,
                             script_id: block.script_id,
@@ -96,6 +128,8 @@ pub fn calculate_collapsed_schedule(
                             schedule_name: item.schedule.name.clone(),
                             schedule_id: schedule_id,
                             block_id: block.id.expect("Block ID missing"),
+                            dj_id: block.dj_id,
+                            dj_name: d_name,
                         });
                         match_found = true;
                         break;
@@ -122,6 +156,8 @@ struct TimelineSlot {
     schedule_name: String,
     schedule_id: i32,
     block_id: i32,
+    dj_id: Option<i32>,
+    dj_name: Option<String>,
 }
 
 impl PartialEq for TimelineSlot {
@@ -231,6 +267,8 @@ fn create_collapsed_block(start_min: usize, duration: i32, slot: &TimelineSlot) 
         priority: slot.priority,
         schedule_name: slot.schedule_name.clone(),
         schedule_id: slot.schedule_id,
+        dj_id: slot.dj_id,
+        dj_name: slot.dj_name.clone(),
     }
 }
 
@@ -256,6 +294,8 @@ mod tests {
                 schedule_name: "High Pri".to_string(),
                 schedule_id: 2,
                 block_id: 200,
+                dj_id: None,
+                dj_name: None,
             });
         }
 
@@ -277,6 +317,8 @@ mod tests {
                     schedule_name: "Low Pri".to_string(),
                     schedule_id: 1,
                     block_id: 100,
+                    dj_id: None,
+                    dj_name: None,
                 });
             }
         }

@@ -17,6 +17,8 @@
     --text-primary: #f3f4f6;
     --text-secondary: #9ca3af;
     --border-color: #2d3748;
+    --card-bg: #161920;
+    --bg-hover: #2d3748;
   }
 
   body {

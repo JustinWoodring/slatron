@@ -30,6 +30,8 @@ pub struct NodeState {
     pub node_id: Arc<RwLock<Option<i32>>>,
     pub mpv: Arc<MpvClient>,
     pub mpv_process: Arc<Mutex<Option<Child>>>,
+    pub mpv_voice: Arc<MpvClient>,
+    pub mpv_process_voice: Arc<Mutex<Option<Child>>>,
     pub log_sender: Arc<Mutex<Option<UnboundedSender<crate::websocket_client::NodeMessage>>>>,
     pub script_cache: Arc<RwLock<HashMap<i32, String>>>,
     pub script_name_cache: Arc<RwLock<HashMap<String, i32>>>,
@@ -252,20 +254,39 @@ async fn main() -> Result<()> {
     let config = Config::load(&effective_config_path)?;
     tracing::info!("Loaded configuration for node: {}", config.node_name);
 
-    // Spawn MPV
-    tracing::info!("Spawning MPV instance...");
+    // Spawn MPV (Main)
+    tracing::info!("Spawning MPV (Main)...");
     let mut mpv_child = match crate::mpv_client::spawn_mpv(&config.mpv_socket_path) {
         Ok(child) => {
-            tracing::info!("MPV spawned successfully");
+            tracing::info!("MPV (Main) spawned successfully");
             Some(child)
         }
         Err(e) => {
-            tracing::error!("Failed to spawn MPV: {}. Continuing without managed process (assuming manual start).", e);
+            tracing::error!(
+                "Failed to spawn MPV (Main): {}. Continuing without managed process (assuming manual start).",
+                e
+            );
             None
         }
     };
 
-    // Capture output
+    // Spawn MPV (Voice)
+    tracing::info!("Spawning MPV (Voice)...");
+    let mut mpv_voice_child = match crate::mpv_client::spawn_mpv(&config.voice_mpv_socket_path) {
+        Ok(child) => {
+            tracing::info!("MPV (Voice) spawned successfully");
+            Some(child)
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to spawn MPV (Voice): {}. Voice injection might fail.",
+                e
+            );
+            None
+        }
+    };
+
+    // Capture output (Main)
     if let Some(child) = mpv_child.as_mut() {
         if let Some(stdout) = child.stdout.take() {
             std::thread::spawn(move || {
@@ -273,7 +294,7 @@ async fn main() -> Result<()> {
                 let reader = std::io::BufReader::new(stdout);
                 for line in reader.lines() {
                     if let Ok(l) = line {
-                        tracing::info!(target: "slatron_node::mpv", "{}", l);
+                        tracing::info!(target: "slatron_node::mpv_main", "{}", l);
                     }
                 }
             });
@@ -284,7 +305,33 @@ async fn main() -> Result<()> {
                 let reader = std::io::BufReader::new(stderr);
                 for line in reader.lines() {
                     if let Ok(l) = line {
-                        tracing::error!(target: "slatron_node::mpv", "{}", l);
+                        tracing::error!(target: "slatron_node::mpv_main", "{}", l);
+                    }
+                }
+            });
+        }
+    }
+
+    // Capture output (Voice)
+    if let Some(child) = mpv_voice_child.as_mut() {
+        if let Some(stdout) = child.stdout.take() {
+            std::thread::spawn(move || {
+                use std::io::BufRead;
+                let reader = std::io::BufReader::new(stdout);
+                for line in reader.lines() {
+                    if let Ok(l) = line {
+                        tracing::info!(target: "slatron_node::mpv_voice", "{}", l);
+                    }
+                }
+            });
+        }
+        if let Some(stderr) = child.stderr.take() {
+            std::thread::spawn(move || {
+                use std::io::BufRead;
+                let reader = std::io::BufReader::new(stderr);
+                for line in reader.lines() {
+                    if let Ok(l) = line {
+                        tracing::error!(target: "slatron_node::mpv_voice", "{}", l);
                     }
                 }
             });
@@ -298,6 +345,8 @@ async fn main() -> Result<()> {
         node_id: Arc::new(RwLock::new(None)),
         mpv: Arc::new(MpvClient::new(config.mpv_socket_path.clone())),
         mpv_process: Arc::new(Mutex::new(mpv_child)),
+        mpv_voice: Arc::new(MpvClient::new(config.voice_mpv_socket_path.clone())),
+        mpv_process_voice: Arc::new(Mutex::new(mpv_voice_child)),
         log_sender: log_sender,
         script_cache: Arc::new(RwLock::new(HashMap::new())),
         script_name_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -347,17 +396,13 @@ async fn poll_schedule(state: NodeState) {
     let poll_interval_secs = state.config.schedule_poll_interval_secs;
 
     // 1. Wait for Node ID (Connection) with fast polling
-    let mut node_id = None;
-    loop {
-        {
-            let id = *state.node_id.read().await;
-            if id.is_some() {
-                node_id = id;
-                break;
-            }
+    // 1. Wait for Node ID (Connection) with fast polling
+    let node_id = loop {
+        if let Some(id) = *state.node_id.read().await {
+            break Some(id);
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
-    }
+    };
 
     // 2. Initial Fetch Immediately upon connection
     if let Some(id) = node_id {
@@ -690,9 +735,6 @@ async fn playback_loop(state: NodeState) {
 
                     if let Err(e) = state.mpv.play(path, start_secs, loop_enabled) {
                         tracing::error!("Failed to play content: {}", e);
-                    } else {
-                        // Update current content ID so heartbeat can see it
-                        *state.current_content_id.write().await = block.content_id;
                     }
 
                     // 4. Execute 'on_load' for all scripts

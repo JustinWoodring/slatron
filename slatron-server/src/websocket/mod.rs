@@ -44,11 +44,21 @@ pub enum NodeCommand {
     #[serde(rename = "stop")]
     Seek { position_secs: f64 },
     #[serde(rename = "load_content")]
-    LoadContent { content_id: i32 },
+    LoadContent {
+        content_id: i32,
+        path: Option<String>,
+    },
+    #[serde(rename = "queue_content")]
+    QueueContent {
+        content_id: i32,
+        path: Option<String>,
+    },
     #[serde(rename = "reload_schedule")]
     ReloadSchedule,
     #[serde(rename = "shutdown")]
     Shutdown,
+    #[serde(rename = "inject_audio")]
+    InjectAudio { url: String, mix: bool },
 }
 
 // Node → Server messages
@@ -64,6 +74,7 @@ pub enum NodeMessage {
     Heartbeat {
         current_content_id: Option<i32>,
         playback_position_secs: Option<f32>,
+        playback_duration_secs: Option<f32>,
         status: String,
         cpu_usage_percent: f64,
         memory_usage_mb: f64,
@@ -135,6 +146,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     });
 
                                     tracing::info!("Node {} authenticated", node_name);
+
+                                    // Register in connected_nodes
+                                    {
+                                        let mut nodes = state_clone.connected_nodes.write().await;
+                                        nodes.insert(id, tx.clone());
+                                    }
                                 }
                                 Err(e) => {
                                     let _ = tx.send(ServerMessage::AuthResponse {
@@ -148,10 +165,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         NodeMessage::Heartbeat {
                             current_content_id,
                             playback_position_secs,
+                            playback_duration_secs,
                             status,
                             cpu_usage_percent,
                             memory_usage_mb,
-                            errors: _,
+                            errors,
                         } => {
                             if authenticated {
                                 if let Some(id) = node_id {
@@ -161,6 +179,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                         &status,
                                         current_content_id,
                                         playback_position_secs,
+                                        playback_duration_secs,
+                                        cpu_usage_percent,
+                                        memory_usage_mb,
+                                        if errors.is_empty() {
+                                            None
+                                        } else {
+                                            Some(errors.join("; "))
+                                        },
                                     )
                                     .await
                                     {
@@ -170,11 +196,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                     let _ = tx.send(ServerMessage::HeartbeatAck);
 
                                     tracing::debug!(
-                                        "Node {} heartbeat: status={}, content={:?}, pos={:?}, cpu={:.1}%, mem={:.1}MB",
+                                        "Node {} heartbeat: status={}, content={:?}, pos={:?}, dur={:?}, cpu={:.1}%, mem={:.1}MB",
                                         id,
                                         status,
                                         current_content_id,
                                         playback_position_secs,
+                                        playback_duration_secs,
                                         cpu_usage_percent,
                                         memory_usage_mb
                                     );
@@ -245,9 +272,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
-    // Clean up: mark node as offline
+    // Clean up: mark node as offline and remove from connected_nodes
     if let Some(id) = node_id {
         let _ = mark_node_offline(&state, id).await;
+        // Remove from connected_nodes
+        {
+            let mut nodes = state.connected_nodes.write().await;
+            nodes.remove(&id);
+        }
         tracing::info!("Node {} disconnected", id);
     }
 }
@@ -289,20 +321,25 @@ async fn update_node_status(
     status: &str,
     current_content_id: Option<i32>,
     playback_position_secs: Option<f32>,
+    playback_duration_secs: Option<f32>,
+    _cpu_usage_percent: f64,
+    _memory_usage_mb: f64,
+    _error_msg: Option<String>,
 ) -> Result<(), String> {
-    use crate::schema::nodes::dsl;
+    use crate::schema::nodes::dsl as n_dsl;
 
     let mut conn = state
         .db
         .get()
         .map_err(|_| "Database connection error".to_string())?;
 
-    diesel::update(dsl::nodes.filter(dsl::id.eq(node_id)))
+    diesel::update(n_dsl::nodes.filter(n_dsl::id.eq(node_id)))
         .set((
-            dsl::status.eq(status),
-            dsl::last_heartbeat.eq(Utc::now().naive_utc()),
-            dsl::current_content_id.eq(current_content_id),
-            dsl::playback_position_secs.eq(playback_position_secs),
+            n_dsl::status.eq(status),
+            n_dsl::last_heartbeat.eq(Utc::now().naive_utc()),
+            n_dsl::current_content_id.eq(current_content_id),
+            n_dsl::playback_position_secs.eq(playback_position_secs),
+            n_dsl::playback_duration_secs.eq(playback_duration_secs),
         ))
         .execute(&mut conn)
         .map_err(|e| format!("Failed to update node status: {}", e))?;

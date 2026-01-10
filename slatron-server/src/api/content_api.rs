@@ -1,4 +1,4 @@
-use crate::models::{ContentItem, NewContentItem, User};
+use crate::models::{ContentItem, NewContentItem, UpdateContentItem, User};
 use crate::AppState;
 use axum::{
     extract::{Path, State},
@@ -53,7 +53,7 @@ pub async fn update_content(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
     Path(item_id): Path<i32>,
-    Json(updates): Json<NewContentItem>,
+    Json(updates): Json<UpdateContentItem>,
 ) -> Result<Json<ContentItem>, StatusCode> {
     if !user.is_editor() {
         return Err(StatusCode::FORBIDDEN);
@@ -66,17 +66,7 @@ pub async fn update_content(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let item = diesel::update(content_items.filter(id.eq(item_id)))
-        .set((
-            title.eq(updates.title),
-            description.eq(updates.description),
-            content_type.eq(updates.content_type),
-            content_path.eq(updates.content_path),
-            adapter_id.eq(updates.adapter_id),
-            duration_minutes.eq(updates.duration_minutes),
-            tags.eq(updates.tags),
-            node_accessibility.eq(updates.node_accessibility),
-            transformer_scripts.eq(updates.transformer_scripts),
-        ))
+        .set(&updates)
         .returning(ContentItem::as_select())
         .get_result(&mut conn)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

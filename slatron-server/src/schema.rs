@@ -1,6 +1,21 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    ai_providers (id) {
+        id -> Nullable<Integer>,
+        name -> Text,
+        provider_type -> Text,
+        api_key -> Nullable<Text>,
+        endpoint_url -> Nullable<Text>,
+        model_name -> Nullable<Text>,
+        is_active -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        provider_category -> Text,
+    }
+}
+
+diesel::table! {
     content_items (id) {
         id -> Nullable<Integer>,
         title -> Text,
@@ -14,6 +29,35 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         transformer_scripts -> Nullable<Text>,
+        is_dj_accessible -> Bool,
+    }
+}
+
+diesel::table! {
+    dj_memories (id) {
+        id -> Nullable<Integer>,
+        dj_id -> Integer,
+        memory_type -> Text,
+        content -> Text,
+        importance_score -> Integer,
+        happened_at -> Timestamp,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    dj_profiles (id) {
+        id -> Nullable<Integer>,
+        name -> Text,
+        personality_prompt -> Text,
+        voice_config_json -> Text,
+        context_depth -> Integer,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        voice_provider_id -> Nullable<Integer>,
+        llm_provider_id -> Nullable<Integer>,
+        context_script_ids -> Nullable<Text>,
+        talkativeness -> Float,
     }
 }
 
@@ -50,6 +94,8 @@ diesel::table! {
         updated_at -> Timestamp,
         current_content_id -> Nullable<Integer>,
         playback_position_secs -> Nullable<Float>,
+        playback_duration_secs -> Nullable<Float>,
+        script_context -> Nullable<Text>,
     }
 }
 
@@ -76,6 +122,7 @@ diesel::table! {
         script_id -> Nullable<Integer>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        dj_id -> Nullable<Integer>,
     }
 }
 
@@ -89,6 +136,7 @@ diesel::table! {
         is_active -> Bool,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        dj_id -> Nullable<Integer>,
     }
 }
 
@@ -118,16 +166,22 @@ diesel::table! {
 }
 
 diesel::joinable!(content_items -> scripts (adapter_id));
+diesel::joinable!(dj_memories -> dj_profiles (dj_id));
 diesel::joinable!(node_schedules -> nodes (node_id));
 diesel::joinable!(node_schedules -> schedules (schedule_id));
 diesel::joinable!(nodes -> content_items (current_content_id));
 diesel::joinable!(permissions -> users (user_id));
 diesel::joinable!(schedule_blocks -> content_items (content_id));
+diesel::joinable!(schedule_blocks -> dj_profiles (dj_id));
 diesel::joinable!(schedule_blocks -> schedules (schedule_id));
 diesel::joinable!(schedule_blocks -> scripts (script_id));
+diesel::joinable!(schedules -> dj_profiles (dj_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    ai_providers,
     content_items,
+    dj_memories,
+    dj_profiles,
     global_settings,
     node_schedules,
     nodes,

@@ -5,6 +5,7 @@ import { DndContext, useSensor, useSensors, PointerSensor, DragEndEvent, Collisi
 import { useScheduleStore } from '../stores/scheduleStore'
 import { useContentStore } from '../stores/contentStore'
 import { useAuthStore } from '../stores/authStore'
+import { useDjStore } from '../stores/djStore'
 import { ScheduleGrid } from '../components/ScheduleGrid/ScheduleGrid'
 import { BlockEditorPopover } from '../components/ScheduleGrid/BlockEditorPopover'
 import { OneOffScheduleList } from '../components/ScheduleGrid/OneOffScheduleList'
@@ -37,6 +38,7 @@ export default function SchedulePage() {
   const navigate = useNavigate()
   const { fetchSchedules, fetchBlocks, selectedScheduleId, createBlock, updateBlock, deleteSchedule, updateSchedule, setSelectedSchedule, schedules } = useScheduleStore()
   const { fetchContent } = useContentStore()
+  const { fetchDjs } = useDjStore()
   const [zoomLevel, setZoomLevel] = useState(2)
   const [selectedBlockId, setSelectedBlockId] = useState<number | null>(null)
   const [popoverPos, setPopoverPos] = useState<{ x: number, y: number } | null>(null)
@@ -48,6 +50,7 @@ export default function SchedulePage() {
     Promise.all([
       fetchSchedules(),
       fetchContent(),
+      fetchDjs(),
       fetchSettings()
     ]).then(() => {
       const currentSchedules = useScheduleStore.getState().schedules

@@ -1,0 +1,1 @@
+ALTER TABLE dj_profiles ADD COLUMN talkativeness FLOAT NOT NULL DEFAULT 1.0;

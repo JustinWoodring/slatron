@@ -15,6 +15,8 @@ export interface BlockData {
     specific_date?: string | null;
     script_id?: number | null;
     schedule_id?: number;
+    dj_id?: number | null;
+    dj_name?: string | null;
 }
 
 interface ScheduleBlockProps {
@@ -43,19 +45,30 @@ export const ScheduleBlock = ({
 }: ScheduleBlockProps & { className?: string }) => {
 
     const getBackgroundColor = (type: string) => {
+        // Special styling for DJ blocks
+        if (block.dj_id) {
+            return 'bg-orange-600/30 border-orange-500/60 hover:bg-orange-600/40 shadow-sm shadow-orange-900/20';
+        }
+
         switch (type) {
             case 'video': return 'bg-cyan-600/20 border-cyan-500/50 hover:bg-cyan-600/30';
             case 'stream': return 'bg-purple-600/20 border-purple-500/50 hover:bg-purple-600/30';
             case 'image': return 'bg-amber-600/20 border-amber-500/50 hover:bg-amber-600/30';
+            case 'live': return 'bg-rose-600/20 border-rose-500/50 hover:bg-rose-600/30';
             default: return 'bg-indigo-600/20 border-indigo-500/50 hover:bg-indigo-600/30';
         }
     };
 
     const getTextColor = (type: string) => {
+        if (block.dj_id) {
+            return 'text-orange-200';
+        }
+
         switch (type) {
             case 'video': return 'text-cyan-200';
             case 'stream': return 'text-purple-200';
             case 'image': return 'text-amber-200';
+            case 'live': return 'text-rose-200';
             default: return 'text-indigo-200';
         }
     };

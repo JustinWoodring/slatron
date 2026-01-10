@@ -6,6 +6,10 @@ authors = ["SLATRON AUTHORS"]
 license = "AGPL-3.0-only"
 description = "Slatron Server - Distributed TV Scheduling System"
 
+[features]
+embed-ui = []
+ml-support = ["dep:ort", "dep:ndarray", "dep:hound"]
+
 [dependencies]
 axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
@@ -16,12 +20,14 @@ openssl = { version = "0.10", features = ["vendored"] }
 libsqlite3-sys = { version = "0.26", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+json_comments = "0.2"
 jsonwebtoken = "9.2"
+base64 = "0.21"
 bcrypt = "0.15"
-rhai = { version = "1.16", features = ["serde"] }
+rhai = { version = "1.16", features = ["serde", "sync"] }
 chrono = { version = "0.4", features = ["serde"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["fs", "cors"] }
+tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = "0.3"
@@ -37,13 +43,14 @@ axum-server = { version = "0.7.1", features = ["tls-rustls"] }
 zip = "0.6"
 dialoguer = "0.12.0"
 console = "0.16.1"
+reqwest = { version = "0.11", features = ["json", "blocking", "stream"] }
+rand = "0.8.5"
+ort = { version = "2.0.0-rc.4", features = ["download-binaries", "ndarray"], optional = true }
+ndarray = { version = "0.16", optional = true }
+hound = { version = "3.5", optional = true }
 
 [build-dependencies]
 zip = "0.6"
 walkdir = "2"
 
-[features]
-embed-ui = []
-
 [dev-dependencies]
-reqwest = "0.11"

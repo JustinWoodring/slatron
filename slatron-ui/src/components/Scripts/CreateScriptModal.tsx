@@ -39,6 +39,20 @@ fn load_content() {
         duration_minutes: 5,
     };
 }`
+            } else if (formData.script_type === 'server_context') {
+                defaultContent = `// Server Context Script
+// Runs on the server to inject real-world info into the DJ Prompt
+// Available helpers: get_local_time(), http_get(url)
+
+let time = get_local_time();
+let context = "Current Time: " + time;
+
+// You can fetch external data:
+// let weather = http_get("https://wttr.in/?format=3");
+// context += "\\nWeather: " + weather;
+
+context; // The last expression is returned and appended to the DJ prompt
+`
             }
 
             const newScript = await createScript({
@@ -100,6 +114,7 @@ fn load_content() {
                         >
                             <option value="content_loader">Content Loader</option>
                             <option value="transformer">Transformer</option>
+                            <option value="server_context">Server Context Source</option>
                         </select>
                     </div>
 

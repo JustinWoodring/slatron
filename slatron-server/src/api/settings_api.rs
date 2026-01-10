@@ -67,3 +67,16 @@ pub async fn update_setting(
 
     Ok(Json(setting))
 }
+
+#[derive(serde::Serialize)]
+pub struct SystemCapabilities {
+    pub orpheus_enabled: bool,
+}
+
+pub async fn get_system_capabilities(
+    State(_state): State<AppState>,
+) -> Result<Json<SystemCapabilities>, StatusCode> {
+    Ok(Json(SystemCapabilities {
+        orpheus_enabled: cfg!(feature = "ml-support"),
+    }))
+}

@@ -372,17 +372,45 @@ export default function ScriptEditorPage() {
                         </div>
                     )}
 
-                    <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-4">
-                        <h4 className="font-medium text-white text-sm mb-2">Available Globals</h4>
-                        <ul className="text-xs text-[var(--text-secondary)] space-y-1 font-mono">
-                            <li>- print(msg)</li>
-                            <li>- shell_execute(cmd, args)</li>
-                            <li>- download_file(url, path)</li>
-                            <li>- get_env(key)</li>
-                            <li>- get_setting(key)</li>
-                            <li>- mpv_send(cmd_str)</li>
-                            <li>- settings (Map)</li>
-                        </ul>
+                    <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-xl p-4 flex flex-col gap-3 overflow-y-auto max-h-[400px] custom-scrollbar">
+                        <h4 className="font-bold text-white text-sm flex items-center gap-2">
+                            <svg className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            Scripting Reference
+                        </h4>
+
+                        <div className="space-y-4">
+                            <div>
+                                <h5 className="text-xs font-bold text-[var(--accent-primary)] mb-1">Entry Points</h5>
+                                <ul className="text-xs text-[var(--text-secondary)] space-y-1 font-mono">
+                                    <li><span className="text-white">fn on_load()</span> - Before playback (Transformer)</li>
+                                    <li><span className="text-white">fn on_unload()</span> - After playback (Transformer)</li>
+                                    <li><span className="text-white">fn load_content(params)</span> - Fetch content (Loader)</li>
+                                </ul>
+                            </div>
+
+                            <div>
+                                <h5 className="text-xs font-bold text-[var(--accent-primary)] mb-1">Variables</h5>
+                                <ul className="text-xs text-[var(--text-secondary)] space-y-1 font-mono">
+                                    <li><span className="text-white">params</span> - Input JSON object</li>
+                                    <li><span className="text-white">settings</span> - Global Settings Map</li>
+                                    <li><span className="text-white">dj</span> - Current DJ Profile (Transformer)</li>
+                                    <li><span className="text-white">content_item</span> - Target Content (Transformer)</li>
+                                </ul>
+                            </div>
+
+                            <div>
+                                <h5 className="text-xs font-bold text-[var(--accent-primary)] mb-1">Functions</h5>
+                                <ul className="text-xs text-[var(--text-secondary)] space-y-1 font-mono">
+                                    <li>print(msg)</li>
+                                    <li>shell_execute(cmd, args)</li>
+                                    <li>download_file(url, path)</li>
+                                    <li>get_env(key)</li>
+                                    <li>mpv_send(cmd_str)</li>
+                                </ul>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

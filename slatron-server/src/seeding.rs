@@ -56,6 +56,7 @@ struct DefaultScript {
     script_type: &'static str,
     content: &'static str,
     description: &'static str,
+    params_schema: Option<&'static str>,
 }
 
 const DEFAULT_SCRIPTS: &[DefaultScript] = &[
@@ -64,24 +65,42 @@ const DEFAULT_SCRIPTS: &[DefaultScript] = &[
         script_type: "transformer",
         content: include_str!("defaults/scripts/loop_content.rhai"),
         description: "Loops the content item.",
+        params_schema: None,
     },
     DefaultScript {
         name: "Mute Audio",
         script_type: "transformer",
         content: include_str!("defaults/scripts/mute_audio.rhai"),
         description: "Mutes audio playback.",
+        params_schema: None,
     },
     DefaultScript {
         name: "Start at 10s",
         script_type: "transformer",
         content: include_str!("defaults/scripts/start_at_10s.rhai"),
         description: "Starts playback at the 10-second mark.",
+        params_schema: None,
     },
     DefaultScript {
         name: "Station Bug",
         script_type: "transformer",
         content: include_str!("defaults/scripts/station_bug.rhai"),
         description: "Displays the station bug based on global settings.",
+        params_schema: None,
+    },
+    DefaultScript {
+        name: "YouTube Loader",
+        script_type: "content_loader",
+        content: include_str!("defaults/scripts/youtube_loader.rhai"),
+        description: "Loads content from a YouTube URL (Video or Playlist).",
+        params_schema: Some(include_str!("defaults/scripts/youtube_loader.params.json")),
+    },
+    DefaultScript {
+        name: "Time Injector",
+        script_type: "server_context",
+        content: include_str!("defaults/scripts/time_injector.rhai"),
+        description: "Injects current time into DJ context.",
+        params_schema: None,
     },
 ];
 
@@ -138,6 +157,7 @@ fn seed_scripts(conn: &mut SqliteConnection) -> Result<()> {
                         script_content.eq(ds.content),
                         description.eq(ds.description),
                         script_type.eq(ds.script_type),
+                        parameters_schema.eq(ds.params_schema),
                     ))
                     .execute(conn)?;
             }
@@ -149,7 +169,7 @@ fn seed_scripts(conn: &mut SqliteConnection) -> Result<()> {
                 description: Some(ds.description.to_string()),
                 script_type: ds.script_type.to_string(),
                 script_content: ds.content.to_string(),
-                parameters_schema: None,
+                parameters_schema: ds.params_schema.map(|s| s.to_string()),
                 is_builtin: true,
             };
 

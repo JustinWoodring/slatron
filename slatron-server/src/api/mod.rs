@@ -1,5 +1,6 @@
 pub mod auth_api;
 pub mod content_api;
+pub mod dj_api;
 pub mod nodes_api;
 pub mod permissions_api;
 pub mod schedules_api;
@@ -79,7 +80,22 @@ pub fn routes(state: AppState) -> Router<AppState> {
             delete(permissions_api::delete_permission),
         )
         // Settings
+        // Settings
         .route("/settings/:key", put(settings_api::update_setting))
+        // DJ / AI Routes
+        .route("/djs", get(dj_api::list_djs))
+        .route("/djs", post(dj_api::create_dj))
+        .route("/djs/:id", get(dj_api::get_dj).put(dj_api::update_dj))
+        .route("/djs/:id", delete(dj_api::delete_dj))
+        .route("/ai-providers", get(dj_api::list_ai_providers))
+        .route("/ai-providers", post(dj_api::create_ai_provider))
+        .route("/ai-providers/:id", put(dj_api::update_ai_provider))
+        .route("/ai-providers/:id", delete(dj_api::delete_ai_provider))
+        // DJ Memories
+        .route("/djs/:id/memories", get(dj_api::get_dj_memories))
+        .route("/djs/:id/memories", post(dj_api::create_dj_memory))
+        .route("/memories/:id", put(dj_api::update_dj_memory))
+        .route("/memories/:id", delete(dj_api::delete_dj_memory))
         .route_layer(middleware::from_fn_with_state(
             state,
             crate::auth::middleware::auth_middleware,
@@ -91,5 +107,9 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/auth/logout", post(auth_api::logout))
         .route("/nodes/:id/schedule", get(nodes_api::get_node_schedule))
         .route("/settings", get(settings_api::list_settings))
+        .route(
+            "/system/capabilities",
+            get(settings_api::get_system_capabilities),
+        )
         .merge(protected_routes)
 }

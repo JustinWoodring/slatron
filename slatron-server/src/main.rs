@@ -14,13 +14,17 @@ use axum::{routing::get, Router};
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc::UnboundedSender, RwLock};
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::Config;
 use crate::db::DbPool;
+use crate::services::{
+    ai_service::AiService, script_service::ScriptService, tts_service::TtsService,
+};
+use crate::websocket::ServerMessage;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -28,6 +32,12 @@ pub struct AppState {
     pub config: Arc<Config>,
     // Store last 100 logs per node_id
     pub node_logs: Arc<RwLock<HashMap<i32, VecDeque<crate::models::LogEntry>>>>,
+    pub ai_service: Arc<AiService>,
+    pub tts_service: Arc<TtsService>,
+    pub script_service: Arc<ScriptService>,
+    pub connected_nodes: Arc<RwLock<HashMap<i32, UnboundedSender<ServerMessage>>>>,
+    // Track recent plays globally (Content IDs)
+    pub recent_plays: Arc<RwLock<VecDeque<i32>>>,
 }
 
 use clap::Parser;
@@ -120,6 +130,26 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    #[cfg(feature = "ml-support")]
+    {
+        // Extract embedded ML model
+        let data_dir = std::path::Path::new("data");
+        // Check if snac.onnx exists inside data dir. If not, extract.
+        if !data_dir.join("snac.onnx").exists() {
+            tracing::info!("Extracting embedded ML models to {:?}", data_dir);
+            if !data_dir.exists() {
+                std::fs::create_dir_all(data_dir)?;
+            }
+
+            let zip_data = include_bytes!(concat!(env!("OUT_DIR"), "/model_assets.zip"));
+            let cursor = std::io::Cursor::new(zip_data);
+            let mut archive = zip::ZipArchive::new(cursor)?;
+
+            archive.extract(data_dir)?;
+            tracing::info!("ML models extracted.");
+        }
+    }
+
     // Determine config path
     let config_path = cli
         .config
@@ -176,6 +206,11 @@ async fn main() -> Result<()> {
         db: db_pool,
         config: Arc::new(config.clone()),
         node_logs: Arc::new(RwLock::new(HashMap::new())),
+        ai_service: Arc::new(AiService::new()),
+        tts_service: Arc::new(TtsService::new()),
+        script_service: Arc::new(ScriptService::new()),
+        connected_nodes: Arc::new(RwLock::new(HashMap::new())),
+        recent_plays: Arc::new(RwLock::new(VecDeque::new())),
     };
 
     // Spawn heartbeat monitor
@@ -225,6 +260,7 @@ async fn main() -> Result<()> {
             ServeDir::new(&static_path)
                 .not_found_service(ServeFile::new(format!("{}/index.html", static_path))),
         )
+        .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state);
 

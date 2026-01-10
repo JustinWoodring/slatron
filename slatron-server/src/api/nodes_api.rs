@@ -36,7 +36,9 @@ pub struct EffectiveBlock {
     pub start_time: chrono::NaiveTime,
     pub duration_minutes: i32,
     pub script_id: Option<i32>,
-    pub source_schedule_name: String, // Added field
+    pub source_schedule_name: String,
+    pub dj_id: Option<i32>,
+    pub dj_name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -301,6 +303,8 @@ pub async fn get_node_schedule(
                 duration_minutes: cb.duration_minutes,
                 script_id: cb.script_id,
                 source_schedule_name: cb.schedule_name.clone(), // Populate from collapsed block
+                dj_id: cb.dj_id,                                // Added mapping
+                dj_name: cb.dj_name.clone(),
             }
         })
         .collect();
