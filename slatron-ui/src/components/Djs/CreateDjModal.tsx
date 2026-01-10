@@ -12,6 +12,23 @@ import {
     AiProvider,
 } from '../../api/dj'
 import { getScripts, Script } from '../../api/scripts'
+import {
+    DndContext,
+    closestCenter,
+    KeyboardSensor,
+    PointerSensor,
+    useSensor,
+    useSensors,
+    DragEndEvent,
+} from '@dnd-kit/core';
+import {
+    arrayMove,
+    SortableContext,
+    sortableKeyboardCoordinates,
+    useSortable,
+    verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface CreateDjModalProps {
     isOpen: boolean
@@ -20,18 +37,79 @@ interface CreateDjModalProps {
     initialDj?: DjProfile
 }
 
+interface ScriptConfig {
+    id: number
+    params: Record<string, any>
+}
+
+// Sortable Item Component
+const SortableScriptItem = ({
+    script,
+    onRemove,
+    renderParams
+}: {
+    script: Script,
+    config: ScriptConfig,
+    onRemove: (id: number) => void,
+    renderParams: (script: Script) => React.ReactNode
+}) => {
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        transition,
+    } = useSortable({ id: script.id });
+
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+    };
+
+    return (
+        <div ref={setNodeRef} style={style} className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded mb-2 group">
+            <div className="flex items-center p-3">
+                {/* Drag Handle */}
+                <div {...attributes} {...listeners} className="mr-3 cursor-grab text-[var(--text-secondary)] hover:text-white">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
+                    </svg>
+                </div>
+
+                <div className="flex-1">
+                    <div className="font-medium text-white">{script.name}</div>
+                    {script.description && <div className="text-xs text-[var(--text-secondary)]">{script.description}</div>}
+                </div>
+
+                <button
+                    onClick={() => onRemove(script.id)}
+                    className="ml-3 text-[var(--text-secondary)] hover:text-red-400 p-1"
+                    title="Remove script"
+                >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            {renderParams(script)}
+        </div>
+    );
+}
+
 export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }: CreateDjModalProps) {
     const [activeTab, setActiveTab] = useState<'profile' | 'scripts' | 'memories'>('profile')
-    const [formData, setFormData] = useState({
-        name: '',
-        personality_prompt: '',
-        voice_config_json: '{}',
-        context_depth: 5,
-        context_script_ids_list: [] as number[],
-        voice_provider_id: '' as string | number,
-        llm_provider_id: '' as string | number,
-        talkativeness: 1.0,
-    })
+    // We keep state separate for complex structures usually, but keeping unified is fine if typed well
+    const [name, setName] = useState('')
+    const [personalityPrompt, setPersonalityPrompt] = useState('')
+    const [voiceConfigJson, setVoiceConfigJson] = useState('{}')
+    const [contextDepth, setContextDepth] = useState(5)
+    // The core change: proper script config array
+    const [selectedScripts, setSelectedScripts] = useState<ScriptConfig[]>([])
+
+    const [voiceProviderId, setVoiceProviderId] = useState<string>('')
+    const [llmProviderId, setLlmProviderId] = useState<string>('')
+    const [talkativeness, setTalkativeness] = useState(1.0)
+
     const [contextScripts, setContextScripts] = useState<Script[]>([])
     const [providers, setProviders] = useState<AiProvider[]>([])
     const [memories, setMemories] = useState<DjMemory[]>([])
@@ -41,48 +119,80 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
     const [isAddingMemory, setIsAddingMemory] = useState(false)
     const [isSubmitting, setIsSubmitting] = useState(false)
 
+    // DnD Sensors
+    const sensors = useSensors(
+        useSensor(PointerSensor),
+        useSensor(KeyboardSensor, {
+            coordinateGetter: sortableKeyboardCoordinates,
+        })
+    );
+
+    const handleDragEnd = (event: DragEndEvent) => {
+        const { active, over } = event;
+        if (active.id !== over?.id) {
+            setSelectedScripts((items) => {
+                const oldIndex = items.findIndex(i => i.id === active.id);
+                const newIndex = items.findIndex(i => i.id === over?.id);
+                return arrayMove(items, oldIndex, newIndex);
+            });
+        }
+    };
+
     useEffect(() => {
         if (isOpen) {
             loadScripts();
             loadProviders();
             if (initialDj) {
-                setFormData({
-                    name: initialDj.name,
-                    personality_prompt: initialDj.personality_prompt,
-                    voice_config_json: initialDj.voice_config_json,
-                    context_depth: initialDj.context_depth,
-                    context_script_ids_list: initialDj.context_script_ids
-                        ? initialDj.context_script_ids.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n))
-                        : [],
-                    voice_provider_id: initialDj.voice_provider_id || '',
-                    llm_provider_id: initialDj.llm_provider_id || '',
-                    talkativeness: initialDj.talkativeness ?? 1.0,
-                });
+                setName(initialDj.name);
+                setPersonalityPrompt(initialDj.personality_prompt);
+                setVoiceConfigJson(initialDj.voice_config_json);
+                setContextDepth(initialDj.context_depth);
+                setVoiceProviderId(initialDj.voice_provider_id?.toString() || '');
+                setLlmProviderId(initialDj.llm_provider_id?.toString() || '');
+                setTalkativeness(initialDj.talkativeness ?? 1.0);
+
+                // Parse Scripts
+                if (initialDj.context_script_ids) {
+                    const raw = initialDj.context_script_ids.trim();
+                    if (raw.startsWith('[')) {
+                        try {
+                            setSelectedScripts(JSON.parse(raw));
+                        } catch (e) {
+                            console.error("Failed to parse script JSON", e);
+                            setSelectedScripts([]);
+                        }
+                    } else {
+                        // Legacy CSV
+                        const ids = raw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+                        setSelectedScripts(ids.map(id => ({ id, params: {} })));
+                    }
+                } else {
+                    setSelectedScripts([]);
+                }
+
                 loadMemories(initialDj.id);
             } else {
-                setFormData({
-                    name: '',
-                    personality_prompt: '',
-                    voice_config_json: JSON.stringify({
-                        stability: 0.5,
-                        similarity_boost: 0.75
-                    }, null, 2),
-                    context_depth: 5,
-                    context_script_ids_list: [] as number[],
-                    voice_provider_id: '',
-                    llm_provider_id: '',
-                    talkativeness: 1.0,
-                });
+                // Reset defaults
+                setName('');
+                setPersonalityPrompt('');
+                setVoiceConfigJson(JSON.stringify({
+                    stability: 0.5,
+                    similarity_boost: 0.75
+                }, null, 2));
+                setContextDepth(5);
+                setSelectedScripts([]);
+                setVoiceProviderId('');
+                setLlmProviderId('');
+                setTalkativeness(1.0);
                 setMemories([]);
             }
-            setActiveTab('profile'); // Reset to profile on open
+            setActiveTab('profile');
         }
     }, [initialDj, isOpen])
 
     const loadScripts = async () => {
         try {
             const scripts = await getScripts();
-            // Filter only server_context scripts
             setContextScripts(scripts.filter(s => s.script_type === 'server_context'));
         } catch (error) {
             console.error("Failed to load scripts", error);
@@ -113,19 +223,21 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
     const handleSubmit = async (e?: React.FormEvent) => {
         if (e) e.preventDefault()
 
-        const serializedScripts = formData.context_script_ids_list.length > 0
-            ? formData.context_script_ids_list.join(',')
+        // Serialize Scripts to JSON string
+        // If empty, null.
+        const serializedScripts = selectedScripts.length > 0
+            ? JSON.stringify(selectedScripts)
             : null;
 
         const payload: NewDjProfile = {
-            name: formData.name,
-            personality_prompt: formData.personality_prompt,
-            voice_config_json: formData.voice_config_json,
-            context_depth: formData.context_depth,
+            name,
+            personality_prompt: personalityPrompt,
+            voice_config_json: voiceConfigJson,
+            context_depth: contextDepth,
             context_script_ids: serializedScripts,
-            voice_provider_id: formData.voice_provider_id ? Number(formData.voice_provider_id) : null,
-            llm_provider_id: formData.llm_provider_id ? Number(formData.llm_provider_id) : null,
-            talkativeness: formData.talkativeness,
+            voice_provider_id: voiceProviderId ? Number(voiceProviderId) : null,
+            llm_provider_id: llmProviderId ? Number(llmProviderId) : null,
+            talkativeness,
         };
 
         try {
@@ -147,7 +259,6 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
 
     const handleAddMemory = async () => {
         if (!initialDj || !newMemoryContent.trim()) return;
-
         try {
             const newMem = await createDjMemory(initialDj.id, {
                 dj_id: initialDj.id,
@@ -176,14 +287,57 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
         }
     }
 
-    const toggleScript = (id: number) => {
-        setFormData(prev => {
-            if (prev.context_script_ids_list.includes(id)) {
-                return { ...prev, context_script_ids_list: prev.context_script_ids_list.filter(x => x !== id) }
-            } else {
-                return { ...prev, context_script_ids_list: [...prev.context_script_ids_list, id] }
+    const addScript = (id: number) => {
+        if (!selectedScripts.some(s => s.id === id)) {
+            setSelectedScripts([...selectedScripts, { id, params: {} }])
+        }
+    }
+
+    const removeScript = (id: number) => {
+        setSelectedScripts(selectedScripts.filter(s => s.id !== id))
+    }
+
+    const updateScriptParam = (scriptId: number, paramKey: string, value: any) => {
+        setSelectedScripts(prev => prev.map(s => {
+            if (s.id === scriptId) {
+                return { ...s, params: { ...s.params, [paramKey]: value } }
             }
-        });
+            return s;
+        }));
+    }
+
+    const renderScriptParams = (script: Script) => {
+        if (!script.parameters_schema) return null;
+
+        let schema: Record<string, string>;
+        try {
+            schema = JSON.parse(script.parameters_schema);
+        } catch (e) {
+            return <div className="text-red-500 text-xs mt-2">Invalid Schema JSON</div>;
+        }
+
+        const config = selectedScripts.find(s => s.id === script.id);
+        if (!config) return null;
+
+        return (
+            <div className="mx-3 mb-3 p-3 bg-[var(--bg-tertiary)] rounded border border-[var(--border-color)] text-sm">
+                <div className="text-[var(--text-secondary)] text-xs mb-2 uppercase tracking-wider font-bold">Parameters</div>
+                <div className="space-y-3">
+                    {Object.entries(schema).map(([key, type]) => (
+                        <div key={key}>
+                            <label className="block text-[var(--text-secondary)] text-xs mb-1 capitalize">{key}</label>
+                            <input
+                                type={type === 'number' ? 'number' : 'text'}
+                                className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded p-1.5 text-white text-xs focus:border-indigo-500 focus:outline-none"
+                                placeholder={`Enter ${key}...`}
+                                value={config.params[key] || ''}
+                                onChange={(e) => updateScriptParam(script.id, key, e.target.value)}
+                            />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )
     }
 
     if (!isOpen) return null
@@ -229,8 +383,8 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
                                     type="text"
                                     required
                                     className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded p-2 text-white text-sm focus:border-indigo-500 focus:outline-none"
-                                    value={formData.name}
-                                    onChange={e => setFormData({ ...formData, name: e.target.value })}
+                                    value={name}
+                                    onChange={e => setName(e.target.value)}
                                 />
                             </div>
                             <div>
@@ -239,8 +393,8 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
                                     required
                                     rows={4}
                                     className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded p-2 text-white text-sm focus:border-indigo-500 focus:outline-none"
-                                    value={formData.personality_prompt}
-                                    onChange={e => setFormData({ ...formData, personality_prompt: e.target.value })}
+                                    value={personalityPrompt}
+                                    onChange={e => setPersonalityPrompt(e.target.value)}
                                     placeholder="Describe the DJ's personality, style, and behavior..."
                                 />
                                 <p className="text-xs text-[var(--text-secondary)] mt-1">
@@ -252,8 +406,8 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
                                     <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">LLM Provider</label>
                                     <select
                                         className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded p-2 text-white text-sm focus:border-indigo-500 focus:outline-none"
-                                        value={formData.llm_provider_id}
-                                        onChange={e => setFormData({ ...formData, llm_provider_id: e.target.value })}
+                                        value={llmProviderId}
+                                        onChange={e => setLlmProviderId(e.target.value)}
                                     >
                                         <option value="">Default (Auto-Select)</option>
                                         {providers
@@ -269,8 +423,8 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
                                     <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Voice Provider</label>
                                     <select
                                         className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded p-2 text-white text-sm focus:border-indigo-500 focus:outline-none"
-                                        value={formData.voice_provider_id}
-                                        onChange={e => setFormData({ ...formData, voice_provider_id: e.target.value })}
+                                        value={voiceProviderId}
+                                        onChange={e => setVoiceProviderId(e.target.value)}
                                     >
                                         <option value="">Default (Auto-Select)</option>
                                         {providers
@@ -289,8 +443,8 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
                                     required
                                     rows={4}
                                     className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded p-2 text-white text-sm font-mono focus:border-indigo-500 focus:outline-none"
-                                    value={formData.voice_config_json}
-                                    onChange={e => setFormData({ ...formData, voice_config_json: e.target.value })}
+                                    value={voiceConfigJson}
+                                    onChange={e => setVoiceConfigJson(e.target.value)}
                                 />
                                 <p className="text-xs text-[var(--text-secondary)] mt-1 font-mono">
                                     JSON settings for the TTS provider (e.g. stability, similarity).
@@ -303,8 +457,8 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
                                     min="0"
                                     max="20"
                                     className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded p-2 text-white text-sm focus:border-indigo-500 focus:outline-none"
-                                    value={formData.context_depth}
-                                    onChange={e => setFormData({ ...formData, context_depth: parseInt(e.target.value) })}
+                                    value={contextDepth}
+                                    onChange={e => setContextDepth(parseInt(e.target.value))}
                                 />
                                 <p className="text-xs text-[var(--text-secondary)] mt-1">
                                     Number of previous tracks/events to include in the AI context window.
@@ -312,7 +466,7 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
-                                    Talkativeness ({Math.round(formData.talkativeness * 100)}%)
+                                    Talkativeness ({Math.round(talkativeness * 100)}%)
                                 </label>
                                 <input
                                     type="range"
@@ -320,8 +474,8 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
                                     max="1"
                                     step="0.05"
                                     className="w-full"
-                                    value={formData.talkativeness}
-                                    onChange={e => setFormData({ ...formData, talkativeness: parseFloat(e.target.value) })}
+                                    value={talkativeness}
+                                    onChange={e => setTalkativeness(parseFloat(e.target.value))}
                                 />
                                 <p className="text-xs text-[var(--text-secondary)] mt-1">
                                     Probability that the DJ will speak when triggered (vs just playing music).
@@ -333,30 +487,63 @@ export default function CreateDjModal({ isOpen, onClose, onDjAdded, initialDj }:
                     {activeTab === 'scripts' && (
                         <div className="space-y-4">
                             <div>
-                                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Active Scripts</label>
-                                <div className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-white text-sm max-h-60 overflow-y-auto">
-                                    {contextScripts.length === 0 && (
-                                        <div className="p-2.5 text-[var(--text-secondary)] italic">No server context scripts available. Create one in the Scripts page.</div>
-                                    )}
-                                    {contextScripts.map(s => (
-                                        <div
-                                            key={s.id}
-                                            onClick={() => toggleScript(s.id!)}
-                                            className={`flex items-center p-3 cursor-pointer hover:bg-[var(--bg-hover)] transition-colors border-b border-[var(--border-color)] last:border-0 ${formData.context_script_ids_list.includes(s.id!) ? 'bg-indigo-900/20' : ''} `}
+                                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">Selected Scripts (Drag to Order)</label>
+
+                                <DndContext
+                                    sensors={sensors}
+                                    collisionDetection={closestCenter}
+                                    onDragEnd={handleDragEnd}
+                                >
+                                    <div className="min-h-[100px] mb-6 space-y-2">
+                                        <SortableContext
+                                            items={selectedScripts.map(s => s.id)}
+                                            strategy={verticalListSortingStrategy}
                                         >
-                                            <div className={`w-5 h-5 mr-3 border rounded flex items-center justify-center transition-colors ${formData.context_script_ids_list.includes(s.id!) ? 'bg-indigo-500 border-indigo-500' : 'border-[var(--text-secondary)]'} `}>
-                                                {formData.context_script_ids_list.includes(s.id!) && <span className="text-white text-xs font-bold">✓</span>}
+                                            {selectedScripts.length === 0 && (
+                                                <div className="text-sm text-[var(--text-secondary)] italic border border-dashed border-[var(--border-color)] rounded p-4 text-center">
+                                                    No scripts selected. Add from list below.
+                                                </div>
+                                            )}
+                                            {selectedScripts.map(config => {
+                                                const script = contextScripts.find(s => s.id === config.id);
+                                                if (!script) return null;
+                                                return (
+                                                    <SortableScriptItem
+                                                        key={config.id}
+                                                        script={script}
+                                                        config={config}
+                                                        onRemove={removeScript}
+                                                        renderParams={renderScriptParams}
+                                                    />
+                                                );
+                                            })}
+                                        </SortableContext>
+                                    </div>
+                                </DndContext>
+
+                                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">Available Scripts</label>
+                                <div className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-lg text-white text-sm max-h-[300px] overflow-y-auto">
+                                    {contextScripts.length === 0 && (
+                                        <div className="p-2.5 text-[var(--text-secondary)] italic">No server context scripts available.</div>
+                                    )}
+                                    {contextScripts
+                                        .filter(s => !selectedScripts.some(sel => sel.id === s.id))
+                                        .map(s => (
+                                            <div
+                                                key={s.id}
+                                                className="flex items-center justify-between p-3 border-b border-[var(--border-color)] last:border-0 hover:bg-[var(--bg-hover)] transition-colors cursor-pointer group"
+                                                onClick={() => addScript(s.id)}
+                                            >
+                                                <div>
+                                                    <div className="font-medium text-white">{s.name}</div>
+                                                    {s.description && <div className="text-xs text-[var(--text-secondary)]">{s.description}</div>}
+                                                </div>
+                                                <button className="text-indigo-400 group-hover:text-white bg-[var(--bg-secondary)] group-hover:bg-indigo-600 w-6 h-6 rounded flex items-center justify-center transition-colors">
+                                                    +
+                                                </button>
                                             </div>
-                                            <div>
-                                                <div className="font-medium text-white">{s.name}</div>
-                                                {s.description && <div className="text-xs text-[var(--text-secondary)]">{s.description}</div>}
-                                            </div>
-                                        </div>
-                                    ))}
+                                        ))}
                                 </div>
-                                <p className="text-xs text-[var(--text-secondary)] mt-2">
-                                    Selected scripts will provide context to the AI during generation.
-                                </p>
                             </div>
                         </div>
                     )}

@@ -201,6 +201,47 @@ pub async fn execute_script(
         settings_map.insert(s.key, s.value);
     }
 
+    // Verify script content
+    tracing::info!("Script Content Preview: {:.100}...", script.script_content);
+
+    // NEW: Use ScriptService for server-side scripts
+    if script.script_type == "server_context"
+        || script.script_type == "transformer"
+        || script.script_type == "content_loader"
+    {
+        // Clone data for blocking task
+        let s_content = script.script_content.clone();
+        let s_type = script.script_type.clone();
+        let params = req.params.clone();
+        let service = state.script_service.clone();
+
+        return match tokio::task::spawn_blocking(move || {
+            service.test_script(&s_content, &s_type, params)
+        })
+        .await
+        .map_err(|e| {
+            tracing::error!("Join Error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })? {
+            Ok(output) => {
+                tracing::info!("Script execution successful. Result: {}", output);
+                Ok(Json(ExecuteScriptResponse {
+                    success: true,
+                    result: Some(output),
+                    mpv_commands: vec![],
+                    error: None,
+                }))
+            }
+            Err(e) => Ok(Json(ExecuteScriptResponse {
+                success: false,
+                result: None,
+                mpv_commands: vec![],
+                error: Some(e.to_string()),
+            })),
+        };
+    }
+
+    // OLD LOGIC (Node scripts, Overlay, Global - simulated on server)
     // Convert serde_json::Value to rhai::Map
     let mut rhai_params = rhai::Map::new();
     if let serde_json::Value::Object(map) = req.params {
@@ -208,9 +249,6 @@ pub async fn execute_script(
             rhai_params.insert(k.into(), rhai::serde::to_dynamic(v).unwrap_or_default());
         }
     }
-
-    // Verify script content
-    tracing::info!("Script Content Preview: {:.100}...", script.script_content);
 
     match rhai_engine::execute_script(
         &script.script_content,

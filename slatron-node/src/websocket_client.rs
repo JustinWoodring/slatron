@@ -257,9 +257,7 @@ impl WebSocketClient {
             }
             NodeCommand::Stop => {
                 tracing::info!("Command: Stop");
-                if let Err(e) = self.state.mpv.stop() {
-                    tracing::error!("Failed to stop playback: {}", e);
-                }
+                crate::playback::stop_playback(&self.state).await;
             }
             NodeCommand::Seek { position_secs } => {
                 tracing::info!("Command: Seek to {}", position_secs);
@@ -269,38 +267,24 @@ impl WebSocketClient {
             }
             NodeCommand::LoadContent { content_id, path } => {
                 tracing::info!("Command: Load content {}", content_id);
-                // 1. Get Path from Cache OR provided Path
-                let path_opt = {
-                    let mut cache = self.state.content_cache.write().await;
-                    if let Some(p) = &path {
-                        // Upsert cache if path provided
-                        cache.insert(
-                            content_id,
-                            ServerContentItem {
-                                id: content_id,
-                                content_path: p.clone(),
-                                transformer_scripts: None, // No scripts for dynamic load? Or fetches later?
-                            },
-                        );
-                        Some(p.clone())
-                    } else {
-                        cache.get(&content_id).map(|c| c.content_path.clone())
-                    }
-                };
 
-                if let Some(p) = path_opt {
-                    tracing::info!("Playing content directly: {}", p);
-                    if let Err(e) = self.state.mpv.play(&p, None, None) {
-                        tracing::error!("Failed to play content via command: {}", e);
-                    } else {
-                        // 2. Update Current Content ID so heartbeat reports it
-                        *self.state.current_content_id.write().await = Some(content_id);
-                    }
-                } else {
-                    tracing::warn!(
-                        "Content ID {} not found in cache and no path provided",
-                        content_id
+                // Upsert to cache if path provided (so we have it for reference/scripts lookup if valid)
+                if let Some(p) = &path {
+                    let mut cache = self.state.content_cache.write().await;
+                    // Only insert if missing or update path?
+                    // Original logic: Upsert.
+                    cache.insert(
+                        content_id,
+                        ServerContentItem {
+                            id: content_id,
+                            content_path: p.clone(),
+                            transformer_scripts: None,
+                        },
                     );
+                }
+
+                if let Err(e) = crate::playback::play_content(&self.state, content_id, path).await {
+                    tracing::error!("Failed to play content via command: {}", e);
                 }
             }
             NodeCommand::QueueContent { content_id, path } => {

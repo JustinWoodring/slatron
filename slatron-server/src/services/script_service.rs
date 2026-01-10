@@ -47,7 +47,13 @@ impl ScriptService {
             }
         });
 
-        // 3. HTTP Helper (Synchronous/Blocking)
+        // 3. Formatted Date Time Helper (User requested)
+        engine.register_fn("get_date_time", |fmt: &str| -> String {
+            // Uses server local time
+            Local::now().format(fmt).to_string()
+        });
+
+        // 4. HTTP Helper (Synchronous/Blocking)
         engine.register_fn("http_get", |url: &str| -> String {
             match reqwest::blocking::get(url) {
                 Ok(resp) => resp
@@ -62,8 +68,127 @@ impl ScriptService {
             tracing::info!("[SCRIPT] {}", msg);
         });
 
+        // 5. XML Helper (Custom Parser for List Handling)
+        engine.register_fn("parse_xml", |xml: &str| -> Dynamic {
+            let v = ScriptService::parse_xml_to_value(xml);
+            rhai::serde::to_dynamic(&v).unwrap_or(Dynamic::UNIT)
+        });
+
         Self {
             engine: Arc::new(engine),
+        }
+    }
+
+    // Helper for robust XML parsing to JSON (Preserves lists)
+    fn parse_xml_to_value(xml: &str) -> serde_json::Value {
+        use quick_xml::events::Event;
+        use quick_xml::reader::Reader;
+        use serde_json::{Map, Value};
+
+        let mut reader = Reader::from_str(xml);
+        reader.config_mut().trim_text(true);
+
+        let mut buf = Vec::new();
+
+        // Stack of (Tag Name, Map of Children)
+        // We start with a dummy root to capture the top-level element
+        let mut stack: Vec<(String, Map<String, Value>)> = Vec::new();
+        stack.push(("ROOT".to_string(), Map::new()));
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                    let mut map = Map::new();
+                    // Capture attributes
+                    for attr in e.attributes() {
+                        if let Ok(attr) = attr {
+                            let val = String::from_utf8_lossy(&attr.value).into_owned();
+                            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+                            map.insert(format!("@{}", key), Value::String(val));
+                        }
+                    }
+                    stack.push((name, map));
+                }
+                Ok(Event::End(_)) => {
+                    if stack.len() > 1 {
+                        let (name, map) = stack.pop().unwrap();
+                        let value = Value::Object(map);
+
+                        if let Some((_, parent_map)) = stack.last_mut() {
+                            if let Some(existing) = parent_map.get_mut(&name) {
+                                if let Value::Array(arr) = existing {
+                                    arr.push(value);
+                                } else {
+                                    let old = existing.clone();
+                                    *existing = Value::Array(vec![old, value]);
+                                }
+                            } else {
+                                parent_map.insert(name, value);
+                            }
+                        }
+                    }
+                }
+                Ok(Event::Empty(e)) => {
+                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                    let mut map = Map::new();
+                    for attr in e.attributes() {
+                        if let Ok(attr) = attr {
+                            let val = String::from_utf8_lossy(&attr.value).into_owned();
+                            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+                            map.insert(format!("@{}", key), Value::String(val));
+                        }
+                    }
+                    let value = Value::Object(map);
+
+                    if let Some((_, parent_map)) = stack.last_mut() {
+                        if let Some(existing) = parent_map.get_mut(&name) {
+                            if let Value::Array(arr) = existing {
+                                arr.push(value);
+                            } else {
+                                let old = existing.clone();
+                                *existing = Value::Array(vec![old, value]);
+                            }
+                        } else {
+                            parent_map.insert(name, value);
+                        }
+                    }
+                }
+                Ok(Event::Text(e)) => {
+                    let text = e.unescape().unwrap_or_default().into_owned();
+                    if !text.is_empty() {
+                        if let Some((_, map)) = stack.last_mut() {
+                            if let Some(Value::String(s)) = map.get_mut("$text") {
+                                s.push_str(&text);
+                            } else {
+                                map.insert("$text".to_string(), Value::String(text));
+                            }
+                        }
+                    }
+                }
+                Ok(Event::CData(e)) => {
+                    let text = String::from_utf8_lossy(&e).into_owned();
+                    if !text.is_empty() {
+                        if let Some((_, map)) = stack.last_mut() {
+                            if let Some(Value::String(s)) = map.get_mut("$text") {
+                                s.push_str(&text);
+                            } else {
+                                map.insert("$text".to_string(), Value::String(text));
+                            }
+                        }
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(_) => break,
+                _ => (),
+            }
+            buf.clear();
+        }
+
+        if let Some((_, root)) = stack.pop() {
+            Value::Object(root)
+        } else {
+            Value::Null
         }
     }
 
@@ -102,36 +227,27 @@ impl ScriptService {
         }
     }
 
-    /// Executes "server_context" scripts for a DJ Profile.
-    /// Injects `dj` (profile data) and `params` (per-script).
+    /// Executed one or more context scripts in order.
+    /// Accumulates their output into the final prompt string.
     pub fn run_context_scripts(
         &self,
         state: &AppState,
+        script_configs: Vec<ScriptExecutionConfig>,
         dj_profile: &DjProfile,
-        scripts_config: Vec<ScriptExecutionConfig>,
+        content_item: Option<&ContentItem>,
+        server_tz_setting: String,
+        schedule_info_arg: Option<serde_json::Value>, // { block: ..., upcoming: ... }
     ) -> Result<String> {
-        use crate::schema::global_settings::dsl as gs;
         use crate::schema::scripts::dsl::*;
 
-        if scripts_config.is_empty() {
+        if script_configs.is_empty() {
             return Ok(String::new());
         }
 
-        let mut conn = state
-            .db
-            .get()
-            .map_err(|e| anyhow::anyhow!("DB Connection failed: {}", e))?;
-
-        // Fetch Global Timezone Setting
-        let server_tz_setting: String = gs::global_settings
-            .filter(gs::key.eq("server_timezone"))
-            .select(gs::value)
-            .first(&mut conn)
-            .optional()?
-            .unwrap_or_else(|| "UTC".to_string());
+        let mut conn = state.db.get()?;
 
         // Extract IDs for fetching
-        let target_ids: Vec<i32> = scripts_config.iter().map(|c| c.script_id).collect();
+        let target_ids: Vec<i32> = script_configs.iter().map(|c| c.script_id).collect();
 
         // Fetch Scripts
         let context_scripts = scripts
@@ -143,32 +259,58 @@ impl ScriptService {
         }
 
         // Map configs for easy param lookup
-        let config_map: std::collections::HashMap<i32, serde_json::Value> = scripts_config
-            .into_iter()
-            .map(|c| (c.script_id, c.params))
+        let config_map: std::collections::HashMap<i32, serde_json::Value> = script_configs
+            .iter()
+            .map(|c| (c.script_id, c.params.clone()))
             .collect();
 
-        // Convert DjProfile to Dynamic Map for Rhai
+        // Map scripts for lookup by ID
+        let scripts_map: std::collections::HashMap<i32, crate::models::Script> = context_scripts
+            .into_iter()
+            .map(|s| (s.id.unwrap_or(0), s))
+            .collect();
+
+        // Convert Objects to Dynamic once
         let dj_dynamic: Dynamic = rhai::serde::to_dynamic(dj_profile)?;
+
+        let item_dynamic: Dynamic = if let Some(item) = content_item {
+            rhai::serde::to_dynamic(item)?
+        } else {
+            Dynamic::UNIT
+        };
+
+        // Resolve Schedule Info: Use arg if provided (Test Mode), else Fetch from DB (Live Mode)
+        let schedule_dynamic = if let Some(info) = schedule_info_arg {
+            rhai::serde::to_dynamic(info).unwrap_or(Dynamic::UNIT)
+        } else {
+            // TODO: Fetch active schedule block for this DJ from DB
+            // For now, defaulting to UNIT until we implement the query logic or helper
+            Dynamic::UNIT
+        };
 
         // Prepare Output
         let mut final_context = String::new();
 
-        // Run Scripts (in order of IDs usually, or we should re-order by input list order?
-        // DB returns unsorted usually or by ID. Let's rely on default sort for now or simpler logic.
-        // Actually, users might expect order to matter.
-        // Let's re-order `context_scripts` to match `target_ids` order if possible,
-        // but for now let's just iterate fetched scripts.
-
-        for script in context_scripts {
+        for config in script_configs {
+            let script_id = config.script_id;
+            let script = match scripts_map.get(&script_id) {
+                Some(s) => s,
+                None => continue,
+            };
             let mut scope = Scope::new();
 
             // Standard Context
-            scope.push("context", String::new());
+            scope.push("context", String::new()); // output accumulator for THIS script? or previous?
+                                                  // Usually context scripts return a string which is appended.
+                                                  // In some designs, 'context' variable holds previous context.
+                                                  // Let's assume clear scope for now but inject global vars.
+
             scope.push("server_timezone", server_tz_setting.clone());
 
-            // Inject User Data
+            // Inject Objects
             scope.push("dj", dj_dynamic.clone());
+            scope.push("content_item", item_dynamic.clone());
+            scope.push("schedule", schedule_dynamic.clone());
 
             // Inject Parameters
             if let Some(params_value) = config_map.get(&script.id.unwrap_or(0)) {
@@ -181,22 +323,27 @@ impl ScriptService {
             // Compile & Run
             match self.engine.compile(&script.script_content) {
                 Ok(ast) => {
+                    // We expect the script to return a string or modify "context" variable?
+                    // Previous implementation seemed to verify if it returns string.
+                    // Or maybe it pushes to 'context' var?
+                    // "scope.push("context", String::new())" suggests it might modify it.
+                    // But `let ctx = scope.get_value...` in `test_script`.
+                    // So let's capture the 'context' variable after run.
+
                     if let Err(e) = self.engine.run_ast_with_scope(&mut scope, &ast) {
                         tracing::error!("Error running context script {}: {}", script.name, e);
-                        // Append error to context to inform AI? Or just log?
-                        // Just log for now.
                     } else {
-                        // Extract output
+                        // Extract output from 'context' variable
                         let script_output =
                             scope.get_value::<String>("context").unwrap_or_default();
-                        if !script_output.is_empty() {
-                            final_context
-                                .push_str(&format!("\n[{}]\n{}\n", script.name, script_output));
+                        if !script_output.trim().is_empty() {
+                            final_context.push_str(&script_output);
+                            final_context.push('\n');
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to compile script {}: {}", script.name, e);
+                    tracing::error!("Error compiling context script {}: {}", script.name, e);
                 }
             }
         }
@@ -374,5 +521,111 @@ impl ScriptService {
         }
 
         Ok(())
+    }
+
+    /// Executed ad-hoc script for testing purposes.
+    /// Injects mock data for `dj` and `content_item` to simulate real execution.
+    pub fn test_script(
+        &self,
+        script_content: &str,
+        script_type: &str,
+        params: serde_json::Value,
+    ) -> Result<String> {
+        let mut scope = Scope::new();
+
+        // 1. Standard Context
+        // We don't have DB access conveniently here for global settings without passing state...
+        // For testing, let's default to UTC or 'Local'.
+        scope.push("server_timezone", "UTC".to_string());
+        scope.push("context", String::new()); // For server_context scripts
+        scope.push("output", String::new()); // For transformer scripts
+
+        // 2. Inject Mock Parameters
+        let params_dynamic: Dynamic = rhai::serde::to_dynamic(params)?;
+        scope.push("params", params_dynamic);
+
+        // 3. Inject Mock DJ Profile
+        let mock_dj = crate::models::DjProfile {
+            id: Some(999),
+            name: "Test DJ".to_string(),
+            personality_prompt: "You are a witty radio host.".to_string(),
+            voice_config_json: "{}".to_string(),
+            context_depth: 5,
+            created_at: chrono::Utc::now().naive_utc(),
+            updated_at: chrono::Utc::now().naive_utc(),
+            voice_provider_id: None,
+            llm_provider_id: None,
+            context_script_ids: None,
+            talkativeness: 0.5,
+        };
+        let dj_dynamic: Dynamic = rhai::serde::to_dynamic(mock_dj)?;
+        scope.push("dj", dj_dynamic);
+
+        // 4. Inject Mock Content Item
+        let mock_item = crate::models::ContentItem {
+            id: Some(101),
+            title: "Test Track Title".to_string(),
+            description: Some("Current description text.".to_string()),
+            content_type: "music".to_string(),
+            content_path: "/path/to/test.mp3".to_string(),
+            adapter_id: None,
+            duration_minutes: Some(3), // i32
+            tags: Some("test,mock".to_string()),
+            node_accessibility: Some("public".to_string()),
+            created_at: chrono::Utc::now().naive_utc(),
+            updated_at: chrono::Utc::now().naive_utc(),
+            transformer_scripts: None,
+            is_dj_accessible: true,
+        };
+        let item_dynamic: Dynamic = rhai::serde::to_dynamic(mock_item)?;
+        scope.push("content_item", item_dynamic);
+
+        // 5. Inject Mock Schedule
+        let mock_schedule = serde_json::json!({
+            "block": {
+                "id": 1,
+                "name": "Morning Drive",
+                "start_time": "06:00:00",
+                "end_time": "10:00:00",
+                "dj_id": 999
+            },
+            "upcoming": [
+                { "title": "Next Song Title", "content_type": "music" }
+            ],
+            "time_remaining_minutes": 45
+        });
+        let schedule_dynamic: Dynamic = rhai::serde::to_dynamic(mock_schedule)?;
+        scope.push("schedule", schedule_dynamic);
+
+        // 6. Compile & Run
+        match self.engine.compile(script_content) {
+            Ok(ast) => {
+                match self.engine.run_ast_with_scope(&mut scope, &ast) {
+                    Ok(_) => {
+                        // Check result based on type behavior
+                        if script_type == "server_context" {
+                            let ctx = scope.get_value::<String>("context").unwrap_or_default();
+                            return Ok(ctx);
+                        } else if script_type == "transformer" {
+                            let out = scope.get_value::<String>("output").unwrap_or_default();
+                            return Ok(out);
+                        } else if script_type == "content_loader" {
+                            // Let's re-run with eval to capture return.
+                            let result = self
+                                .engine
+                                .eval_ast_with_scope::<Dynamic>(&mut scope, &ast)
+                                .map_err(|e| anyhow::anyhow!("Runtime Error: {}", e))?;
+                            return Ok(rhai::serde::from_dynamic::<serde_json::Value>(&result)
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|_| result.to_string()));
+                        }
+
+                        Ok("Script executed successfully (No string output captured)".to_string())
+                    }
+                    Err(e) => Err(anyhow::anyhow!("Runtime Error: {}", e)),
+                }
+            }
+            Err(e) => Err(anyhow::anyhow!("Compilation Error: {}", e)),
+        }
     }
 }

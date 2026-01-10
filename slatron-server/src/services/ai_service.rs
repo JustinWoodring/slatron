@@ -227,6 +227,7 @@ impl AiService {
         context: &str,
         provider: &AiProvider,
         candidate_tracks: Option<&[crate::models::ContentItem]>,
+        schedule_info: Option<serde_json::Value>,
     ) -> Result<DjResponse> {
         // 1. Fetch relevant memories
         let mut conn = state.db.get()?;
@@ -282,15 +283,38 @@ impl AiService {
         let script_ids_str = profile.context_script_ids.clone().unwrap_or_default();
         let profile_clone = profile.clone();
 
+        // Clone track data for the thread
+        let track_option = candidate_tracks.and_then(|t| t.first()).cloned();
+
+        let schedule_info_clone = schedule_info.clone();
+
         let script_context = tokio::task::spawn_blocking(move || {
+            // Fetch Timezone (Synchronously for blocking task)
+            let mut conn = state_clone_for_script
+                .db
+                .get()
+                .map_err(|e| anyhow::anyhow!(e))?;
+            use crate::schema::global_settings::dsl as gs;
+            let tz: String = gs::global_settings
+                .filter(gs::key.eq("server_timezone"))
+                .select(gs::value)
+                .first(&mut conn)
+                .optional()
+                .unwrap_or(None)
+                .unwrap_or_else(|| "UTC".to_string());
+
             let scripts_config =
                 crate::services::script_service::ScriptService::parse_config_string(
                     &script_ids_str,
                 );
+
             script_service.run_context_scripts(
                 &state_clone_for_script,
-                &profile_clone,
                 scripts_config,
+                &profile_clone,
+                track_option.as_ref(),
+                tz,
+                schedule_info_clone, // Passed from top
             )
         })
         .await??;
@@ -334,7 +358,7 @@ Context: {}
 {}
 
 Generate a short break (1-3 sentences) suitable for a TTS engine.
-IMPORTANT: You MUST use behavior tags to express emotion and pacing. Available tags: <laugh>, <sigh>, <breath>, <cough>, <clear_throat>.
+IMPORTANT: You MUST use behavior tags to express emotion and pacing. Available tags: <giggle>, <laugh>, <chuckle>, <sigh>, <cough>, <sniffle>, <groan>, <yawn>, <gasp>.
 Incorporate these naturally into the dialogue to make it feel ALIVE and human-like.
 Output MUST be valid JSON with the following fields:
 - text: The spoken words (including tags).
@@ -367,37 +391,73 @@ Example JSON:
             full_prompt
         );
 
-        let json_str = self.generate_completion(&full_prompt, provider).await?;
+        let mut attempts = 0;
+        let max_attempts = 3;
+        let mut current_prompt = full_prompt.clone();
 
-        // Attempt to parse JSON. If it fails, try to strip markdown code blocks
-        let clean_json = json_str
-            .trim()
-            .trim_start_matches("```json")
-            .trim_start_matches("```")
-            .trim_end_matches("```");
+        loop {
+            attempts += 1;
+            tracing::info!(
+                "Generating DJ Dialogue (Attempt {}/{})",
+                attempts,
+                max_attempts
+            );
 
-        // Parse JSON with comment stripping support
-        let stripped = json_comments::StripComments::new(clean_json.as_bytes());
-        let response: DjResponse = serde_json::from_reader(stripped)
-            .map_err(|e| anyhow!("Failed to parse DJ JSON: {}. Content: {}", e, clean_json))?;
+            let json_str = match self.generate_completion(&current_prompt, provider).await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("LLM Generation failed: {}", e);
+                    if attempts >= max_attempts {
+                        return Err(e);
+                    }
+                    continue;
+                }
+            };
 
-        // Save memory if important
-        if response.memory_importance.unwrap_or(0) > 5 {
-            if let Some(mem_content) = &response.new_memory {
-                let new_mem = NewDjMemory {
-                    dj_id: profile.id.unwrap(),
-                    memory_type: "general".into(), // default
-                    content: mem_content.clone(),
-                    importance_score: response.memory_importance.unwrap_or(0),
-                    happened_at: Utc::now().naive_utc(),
-                };
+            // Attempt to parse JSON. If it fails, try to strip markdown code blocks
+            let clean_json = json_str
+                .trim()
+                .trim_start_matches("```json")
+                .trim_start_matches("```")
+                .trim_end_matches("```");
 
-                diesel::insert_into(dj_memories)
-                    .values(&new_mem)
-                    .execute(&mut conn)?;
+            // Parse JSON with comment stripping support
+            let stripped = json_comments::StripComments::new(clean_json.as_bytes());
+            match serde_json::from_reader::<_, DjResponse>(stripped) {
+                Ok(response) => {
+                    // Save memory if important
+                    if response.memory_importance.unwrap_or(0) > 5 {
+                        if let Some(mem_content) = &response.new_memory {
+                            let new_mem = NewDjMemory {
+                                dj_id: profile.id.unwrap(),
+                                memory_type: "general".into(), // default
+                                content: mem_content.clone(),
+                                importance_score: response.memory_importance.unwrap_or(0),
+                                happened_at: Utc::now().naive_utc(),
+                            };
+
+                            diesel::insert_into(dj_memories)
+                                .values(&new_mem)
+                                .execute(&mut conn)?;
+                        }
+                    }
+                    return Ok(response);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to parse DJ JSON: {}. Content: {}", e, clean_json);
+                    if attempts >= max_attempts {
+                        return Err(anyhow!(
+                            "Failed to parse DJ JSON after {} attempts: {}. Content: {}",
+                            max_attempts,
+                            e,
+                            clean_json
+                        ));
+                    }
+
+                    // Add correction instruction for next attempt
+                    current_prompt = format!("{}\n\nSYSTEM: Your previous response was invalid JSON. Error: {}. Please output ONLY valid JSON matching the schema.", current_prompt, e);
+                }
             }
         }
-
-        Ok(response)
     }
 }

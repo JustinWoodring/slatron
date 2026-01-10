@@ -23,6 +23,7 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
     // Loader State
     const [selectedScriptId, setSelectedScriptId] = useState<number | undefined>()
     const [scriptParams, setScriptParams] = useState('{}')
+    const [bulkDjAccess, setBulkDjAccess] = useState(false)
 
     // Content Form State
     const [formData, setFormData] = useState({
@@ -185,7 +186,7 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
                     duration_minutes: Math.round(item.duration_minutes || item.duration || 0),
                     tags: item.tags || null,
                     node_accessibility: 'public',
-                    is_dj_accessible: false, // Default for bulk import
+                    is_dj_accessible: bulkDjAccess, // Use user preference
                     transformer_scripts: null,
                     adapter_id: undefined
                 }
@@ -310,7 +311,16 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
                                 </div>
                             )}
 
-                            <div className="flex justify-end gap-3 pt-2">
+                            <div className="flex items-center justify-end gap-3 pt-2">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        className="rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                        checked={bulkDjAccess}
+                                        onChange={(e) => setBulkDjAccess(e.target.checked)}
+                                    />
+                                    <span className="text-sm text-[var(--text-secondary)]">Make DJ Accessible</span>
+                                </label>
                                 <button
                                     type="button"
                                     onClick={handleClose}

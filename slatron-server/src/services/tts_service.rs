@@ -87,7 +87,8 @@ impl TtsService {
 
             // 1. Format Prompt
             // Format: <|audio|>voice: text<|eot_id|>
-            let prompt = format!("<|audio|>{}: {}<|eot_id|>", voice, text);
+            let sanitized_text = Self::sanitize_orpheus_text(text);
+            let prompt = format!("<|audio|>{}: {}<|eot_id|>", voice, sanitized_text);
 
             let payload = json!({
                 "model": "orpheus-3b-0.1-ft",
@@ -359,5 +360,56 @@ impl TtsService {
         } else {
             Err(anyhow!("ffmpeg conversion failed"))
         }
+    }
+
+    #[allow(dead_code)]
+    fn sanitize_orpheus_text(text: &str) -> String {
+        let allowed_tags = [
+            "giggle", "laugh", "chuckle", "sigh", "cough", "sniffle", "groan", "yawn", "gasp",
+        ];
+
+        let mut output = String::with_capacity(text.len());
+        let mut tag_buffer = String::new();
+        let mut in_tag = false;
+
+        for c in text.chars() {
+            if in_tag {
+                if c == '>' {
+                    // Tag Closed
+                    if allowed_tags.contains(&tag_buffer.as_str()) {
+                        output.push('<');
+                        output.push_str(&tag_buffer);
+                        output.push('>');
+                    }
+                    // Else: filter out (skip)
+
+                    in_tag = false;
+                    tag_buffer.clear();
+                } else if c.is_whitespace() {
+                    // Not a tag, treat as text
+                    output.push('<');
+                    output.push_str(&tag_buffer);
+                    output.push(c);
+                    in_tag = false;
+                    tag_buffer.clear();
+                } else {
+                    tag_buffer.push(c);
+                }
+            } else {
+                if c == '<' {
+                    in_tag = true;
+                } else {
+                    output.push(c);
+                }
+            }
+        }
+
+        // Handle unclosed tag at end of string
+        if in_tag {
+            output.push('<');
+            output.push_str(&tag_buffer);
+        }
+
+        output
     }
 }

@@ -96,11 +96,25 @@ const DEFAULT_SCRIPTS: &[DefaultScript] = &[
         params_schema: Some(include_str!("defaults/scripts/youtube_loader.params.json")),
     },
     DefaultScript {
+        name: "Schedule Context",
+        script_type: "server_context",
+        content: include_str!("defaults/scripts/schedule_context.rhai"),
+        description: "Injects current block info and upcoming schedule items.",
+        params_schema: None,
+    },
+    DefaultScript {
         name: "Time Injector",
         script_type: "server_context",
         content: include_str!("defaults/scripts/time_injector.rhai"),
         description: "Injects current time into DJ context.",
         params_schema: None,
+    },
+    DefaultScript {
+        name: "RSS News Feed",
+        script_type: "server_context",
+        content: include_str!("defaults/scripts/rss_news.rhai"),
+        description: "Fetches RSS/Atom feed and injects it into local news context.",
+        params_schema: Some(include_str!("defaults/scripts/rss_news.params.json")),
     },
 ];
 

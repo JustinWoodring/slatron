@@ -6,8 +6,22 @@ use diesel::prelude::*;
 use std::time::Duration;
 use tokio::time::interval;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
+use std::sync::{Arc, Mutex};
+
+struct GenerationGuard {
+    node_id: i32,
+    active_set: Arc<Mutex<HashSet<i32>>>,
+}
+
+impl Drop for GenerationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = self.active_set.lock() {
+            set.remove(&self.node_id);
+        }
+    }
+}
 
 pub async fn run(state: AppState) {
     // Run every 10 seconds
@@ -16,7 +30,9 @@ pub async fn run(state: AppState) {
     // Map<NodeID, (ContentID, Timestamp)>
     let mut last_triggered_content: HashMap<i32, (i32, Instant)> = HashMap::new();
     // Track known content on node to detect unloads
+    // Track active processing tasks to prevent stacking
     let mut last_known_content: HashMap<i32, i32> = HashMap::new();
+    let active_generations: Arc<Mutex<HashSet<i32>>> = Arc::new(Mutex::new(HashSet::new()));
 
     loop {
         tick.tick().await;
@@ -25,7 +41,12 @@ pub async fn run(state: AppState) {
             tracing::error!("Heartbeat monitor error: {}", e);
         }
 
-        if let Err(e) = process_dj_logic(&state, &mut last_triggered_content, &mut last_known_content).await {
+        if let Err(e) = process_dj_logic(
+            &state, 
+            &mut last_triggered_content, 
+            &mut last_known_content,
+            active_generations.clone()
+        ).await {
             tracing::error!("DJ Logic error: {}", e);
         }
     }
@@ -63,6 +84,7 @@ async fn process_dj_logic(
     state: &AppState,
     last_triggered_content: &mut HashMap<i32, (i32, Instant)>,
     last_known_content: &mut HashMap<i32, i32>,
+    active_generations: Arc<Mutex<HashSet<i32>>>,
 ) -> Result<(), anyhow::Error> {
     use crate::schema::ai_providers::dsl as ai_dsl;
     use crate::schema::content_items::dsl as c_dsl;
@@ -79,6 +101,17 @@ async fn process_dj_logic(
 
     for node in nodes_online {
         let node_id = node.id.ok_or_else(|| anyhow::anyhow!("Node missing ID"))?;
+
+        // 0. GENERATION INHIBITOR
+        {
+            if let Ok(set) = active_generations.lock() {
+                if set.contains(&node_id) {
+                    tracing::debug!("Node {} skipped: DJ generation currently in progress.", node_id);
+                    continue;
+                }
+            }
+        }
+        
         let current_content_id_val = node.current_content_id.unwrap_or(0); // 0 for cold start
 
         // Detect Content Change (Unload)
@@ -225,6 +258,7 @@ async fn process_dj_logic(
 
         let mut dj_profile_opt: Option<DjProfile> = None;
         let mut active_block_script: Option<String> = None;
+        let mut active_block_info: Option<serde_json::Value> = None;
 
         // 1. Check Schedule for Default DJ
         if let Some(schedule) = &active_schedule {
@@ -269,7 +303,7 @@ async fn process_dj_logic(
                     .load::<ScheduleBlock>(&mut conn)
                     .unwrap_or_default();
 
-                let active_block = blocks.into_iter().find(|b| {
+                let active_block = blocks.iter().find(|b| {
                     let matches_day = if let Some(d) = b.specific_date {
                         d == current_date
                     } else if let Some(dow) = b.day_of_week {
@@ -292,6 +326,63 @@ async fn process_dj_logic(
                 });
 
                 if let Some(block) = active_block {
+                    // Calculate Time Remaining
+                    let start = block.start_time;
+                    let start_secs = start.num_seconds_from_midnight();
+                    let end_secs = start_secs + (block.duration_minutes as u32 * 60);
+                    let curr_secs = current_time.num_seconds_from_midnight();
+                    let remaining_mins = (end_secs as i64 - curr_secs as i64) / 60;
+                    
+                    // Filter Upcoming Items (Next 3 blocks today)
+                    let items: Vec<&ScheduleBlock> = blocks.iter()
+                        .filter(|b| {
+                            // Match day
+                            let matches_day = if let Some(d) = b.specific_date {
+                                d == current_date
+                            } else if let Some(dow) = b.day_of_week {
+                                dow == current_dow
+                            } else {
+                                false
+                            };
+                            if !matches_day { return false; }
+                            
+                            // Must start AFTER current block starts (so we can see subsequent blocks)
+                            // Actually better: start time must be >= current time?
+                            // Or just start time > active block start time?
+                            // Let's rely on standard ordering
+                            b.start_time > block.start_time
+                        })
+                        .into_iter() // Convert refs to values? No, we need sorting.
+                        // Can't sort references easily without collecting
+                        // But wait, `blocks` from DB might not be sorted by time.
+                        // We should sort first or collect and sort.
+                        .collect::<Vec<&ScheduleBlock>>();
+                    
+                    // Sort by time
+                    let mut upcoming_refs = items;
+                    upcoming_refs.sort_by_key(|b| b.start_time);
+                    
+                    let upcoming_json: Vec<serde_json::Value> = upcoming_refs.into_iter().take(3).map(|b| {
+                        serde_json::json!({
+                           "title": format!("Block {}", b.id.unwrap_or(0)), // TODO: Add name/title to schedule_blocks schema
+                           "start_time": b.start_time.to_string(),
+                           "content_type": "block"
+                        })
+                    }).collect();
+
+                    // Populate Info
+                    active_block_info = Some(serde_json::json!({
+                        "block": {
+                            "id": block.id,
+                            "name": format!("Block {}", block.id.unwrap_or(0)), 
+                            "start_time": block.start_time.to_string(),
+                            "duration": block.duration_minutes,
+                            "dj_id": block.dj_id
+                        },
+                        "time_remaining_minutes": remaining_mins,
+                        "upcoming": upcoming_json
+                    }));
+
                     // Block DJ Override
                     if let Some(blk_dj_id) = block.dj_id {
                         if let Ok(blk_dj) = dj_dsl::dj_profiles
@@ -461,7 +552,29 @@ async fn process_dj_logic(
                         delay_ms
                     );
 
+                    // Mark as active
+                    {
+                        if let Ok(mut set) = active_generations.lock() {
+                            set.insert(node_id);
+                        }
+                    }
+                    let active_generations_for_guard = active_generations.clone();
+
+                    // Construct Schedule Info for context injection
+                    let schedule_info = if let Some(block) = active_block_info {
+                         // Only pass if we have block info
+                         Some(block) 
+                    } else {
+                         None
+                    };
+
                     tokio::spawn(async move {
+                        // RAII Guard to remove from active set when task finishes/panics
+                        let _guard = GenerationGuard {
+                            node_id,
+                            active_set: active_generations_for_guard
+                        };
+
                         // 1. Generate Dialogue with Track Selection
                         let intro_prompt = if current_content_id_val == 0 {
                              "You are starting a set. Pick the first song from the list.".to_string()
@@ -489,6 +602,7 @@ async fn process_dj_logic(
                                 &full_prompt,
                                 &provider_clone,
                                 Some(&candidates_clone),
+                                schedule_info, // Pass the info
                             )
                             .await
                         {

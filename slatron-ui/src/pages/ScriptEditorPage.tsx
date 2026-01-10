@@ -351,6 +351,11 @@ export default function ScriptEditorPage() {
                                 {testError ? 'Execution Failed' : 'Output'}
                             </h3>
                             <div className="overflow-auto max-h-60 custom-scrollbar flex flex-col gap-2">
+                                {testError && (
+                                    <pre className="text-xs font-mono whitespace-pre-wrap text-red-300">
+                                        {testError}
+                                    </pre>
+                                )}
                                 {testResult && (
                                     <pre className="text-xs font-mono whitespace-pre-wrap text-gray-300">
                                         {testResult}
@@ -401,13 +406,30 @@ export default function ScriptEditorPage() {
                             </div>
 
                             <div>
-                                <h5 className="text-xs font-bold text-[var(--accent-primary)] mb-1">Functions</h5>
+                                <h5 className="text-xs font-bold text-[var(--accent-primary)] mb-1">Common Functions</h5>
                                 <ul className="text-xs text-[var(--text-secondary)] space-y-1 font-mono">
                                     <li>print(msg)</li>
-                                    <li>shell_execute(cmd, args)</li>
+                                    <li>to_json(val)</li>
+                                </ul>
+                            </div>
+
+                            <div>
+                                <h5 className="text-xs font-bold text-[var(--accent-primary)] mb-1">Server (Context/DJ)</h5>
+                                <ul className="text-xs text-[var(--text-secondary)] space-y-1 font-mono">
+                                    <li>http_get(url)</li>
+                                    <li>parse_xml(xml)</li>
+                                    <li>get_time(fmt, tz)</li>
+                                    <li>log_info(msg)</li>
+                                </ul>
+                            </div>
+
+                            <div>
+                                <h5 className="text-xs font-bold text-[var(--accent-primary)] mb-1">Node (Loader/Overlay)</h5>
+                                <ul className="text-xs text-[var(--text-secondary)] space-y-1 font-mono">
+                                    <li>shell_execute(cmd)</li>
                                     <li>download_file(url, path)</li>
+                                    <li>mpv_send(cmd)</li>
                                     <li>get_env(key)</li>
-                                    <li>mpv_send(cmd_str)</li>
                                 </ul>
                             </div>
                         </div>
