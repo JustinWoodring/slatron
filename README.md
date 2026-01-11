@@ -2,7 +2,7 @@
   <img src="slatron-ui/public/logo.png" width="200" alt="Slatron Logo" />
   <h1>Slatron</h1>
   <p>
-    <strong>A robust, distributed TV scheduling and digital signage system.</strong>
+    <strong>The intelligent TV station manager with adaptive AI hosts and distributed digital signage.</strong>
   </p>
   <p>
     <a href="https://github.com/JustinWoodring/slatron/actions/workflows/nightly.yml">
@@ -11,18 +11,17 @@
   </p>
 </div>
 
-Slatron allows you to manage content, schedule broadcasts, and control playback nodes across your network from a centralized, web-based dashboard. It's built for reliability using Rust and modern web technologies.
-
-<img width="1460" height="1017" alt="image" src="https://github.com/user-attachments/assets/8ff8ed0e-2c4f-41bc-a05b-94cc5d04ec15" />
+Slatron allows you to manage content, schedule broadcasts, and control playback nodes across your network from a centralized, web-based dashboard. It features **fully autonomous AI DJs** that can introduce tracks, read news, and manage the vibe of your station.
 
 ---
 
 ## 🌟 Key Features
 
+*   **Adaptive AI DJs**: Create diverse AI personalities to host your station, with support for Google Gemini and local LLMs (Orpheus).
 *   **Centralized Management**: Manage multiple playback nodes (TVs, screens) from a single server.
 *   **Flexible Scheduling**: Drag-and-drop schedule grid with layered priorities and interrupt scheduling.
 *   **Role-Based Access Control (RBAC)**: Secure your station with `Admin`, `Editor`, and `Viewer` roles.
-*   **Real-time Monitoring**: Live status updates from nodes via WebSockets.
+*   **Real-time Monitoring**: Live status updates and screenshots from nodes.
 *   **Scripting Engine**: Use Rhai scripts for dynamic content loading, overlays, and playback logic.
 *   **Resilient Playback**: Local caching on nodes ensures playback continues even if the network goes down.
 *   **Content Library**: Organize video files and manage valid paths per node.
@@ -125,6 +124,63 @@ secret_key = "PASTE_SECRET_FROM_UI"
 heartbeat_interval_secs = 5
 mpv_socket_path = "/tmp/mpv-socket"
 ```
+
+---
+
+## 🎙️ AI DJs & Orpheus
+
+Slatron features a dynamic **AI DJ** system that can "speak" between songs, introducing tracks, reading news, or just creating a vibe.
+
+### Voice Providers
+You can configure different "Voice Providers" to power the DJ's speech:
+*   **Gemini TTS**: High-quality cloud-based TTS from Google.
+*   **Orpheus (Local)**: A fully offline, local text-to-speech engine powered by specific LLM checkpoints.
+
+### Setting up Orpheus (Local TTS)
+"Orpheus" allows you to run a high-quality DJ voice entirely on your own hardware (no API costs).
+
+1.  **Install LM Studio**: Download and install [LM Studio](https://lmstudio.ai/).
+2.  **Download Model**: Search for and download the `isaiahbjork/orpheus-3b-0.1-ft` model.
+3.  **Start Local Server**:
+    *   Load the model in LM Studio.
+    *   Go to the "Local Server" tab.
+    *   Start the server on port `1234` (default).
+4.  **Configure Slatron**:
+    *   In the Slatron Dashboard, go to **Settings > AI Providers**.
+    *   Add a new provider with type **Orpheus**.
+    *   Set the Endpoint URL to: `http://127.0.0.1:1234/v1/completions`.
+    *   **Important**: You must compile the server with the `ml-support` feature enabled (`cargo run --features ml-support`) as Slatron handles the audio decoding (SNAC) locally.
+
+### Data & Configuration
+
+#### Voice Name
+The `Voice Name` field in the DJ Profile maps differently depending on the provider:
+*   **Gemini TTS**: Use standard model names (e.g., `Aoede`, `Charon`, `Fenrir`, `Puck`, `Zephyr`).
+*   **Orpheus**: Use the specific character name supported by the model (e.g., `tara` for the default fine-tune).
+
+#### Context Injector Scripts
+DJs can be made "aware" of their environment using **Context Scripts**. These are server-side Rhai scripts that run *before* the prompt is sent to the LLM.
+
+*   **Logic**: The script can fetch data (weather, stock prices, internal server state) and must return a **String**.
+*   **Injection**: The returned string is appended to the "Context" block in the system prompt.
+*   **Example Script**:
+    ```rust
+    // Get weather for station location
+    let weather = get_weather("New York");
+    return "Current weather in NY is " + weather + ". Mention it if relevant.";
+    ```
+
+#### Content Loader Scripts
+You can also use Rhai scripts to **bulk import content** (e.g., from YouTube playlists or RSS feeds).
+*   **Location**: "Configuration > Scripts". Create a script of type `Content Loader`.
+*   **Usage**: In "Content > Add Content", switch to "Import via Script".
+*   **Return Format**: The script must return a JSON Object (for one item) or a JSON List (for bulk import).
+    ```json
+    [
+      { "title": "Video 1", "url": "https://...", "duration_minutes": 5 },
+      { "title": "Video 2", "url": "https://...", "duration_minutes": 10 }
+    ]
+    ```
 
 ---
 
