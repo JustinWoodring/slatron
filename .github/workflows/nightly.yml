@@ -48,7 +48,7 @@ jobs:
         echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
 
     - name: Build Server
-      run: cargo build --release --bin slatron-server --target ${{ matrix.target }} --features embed-ui
+      run: cargo build --release --bin slatron-server --target ${{ matrix.target }} --features embed-ui,ml-support
       working-directory: slatron-server
 
     - name: Package Server
