@@ -8,7 +8,7 @@ Cargo.lock
 *.db
 *.db-shm
 *.db-wal
-slatron-server/data/
+
 
 # Node.js
 node_modules/
