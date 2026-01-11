@@ -11,6 +11,7 @@ pub struct Config {
     pub schedule_poll_interval_secs: u64,
     pub mpv_socket_path: String,
     pub offline_mode_warning_hours: u64,
+    pub screenshot_tool_path: Option<String>,
 }
 
 impl Config {
@@ -28,6 +29,7 @@ heartbeat_interval_secs = 5
 schedule_poll_interval_secs = 60
 mpv_socket_path = "/tmp/mpv-socket"
 offline_mode_warning_hours = 24
+# screenshot_tool_path = "/usr/local/bin/screenshot.js"
 "#
     }
 }

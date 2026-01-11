@@ -1,12 +1,14 @@
 use rhai::{Engine, Scope};
+use std::sync::Arc;
+use crate::config::Config;
 
-pub fn create_engine(script_type: &str, mpv: Option<std::sync::Arc<crate::mpv_client::MpvClient>>) -> Engine {
+pub fn create_engine(script_type: &str, mpv: Option<Arc<crate::mpv_client::MpvClient>>, config: Option<Arc<Config>>) -> Engine {
     let mut engine = Engine::new();
 
     // Register functions based on script type
     match script_type {
         "content_loader" => {
-            register_content_loader_functions(&mut engine);
+            register_content_loader_functions(&mut engine, config);
         }
         "overlay" => {
              if let Some(mpv) = mpv {
@@ -25,7 +27,7 @@ pub fn create_engine(script_type: &str, mpv: Option<std::sync::Arc<crate::mpv_cl
         "transformer" => {
             register_transformer_functions(&mut engine);
             // Allow transformers to download files and exec shell (for dynamic content fetching)
-            register_content_loader_functions(&mut engine);
+            register_content_loader_functions(&mut engine, config);
         }
         _ => {}
     }
@@ -37,14 +39,17 @@ pub fn create_engine(script_type: &str, mpv: Option<std::sync::Arc<crate::mpv_cl
     engine
 }
 
-fn register_content_loader_functions(engine: &mut Engine) {
+fn register_content_loader_functions(engine: &mut Engine, config: Option<Arc<Config>>) {
     engine.register_fn("shell_execute", |cmd: String| -> String {
         use std::process::Command;
 
-        match Command::new("sh").arg("-c").arg(&cmd).output() {
-            Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
-            Err(e) => format!("Error: {}", e),
-        }
+        // Use block_in_place to avoid blocking the runtime
+        tokio::task::block_in_place(|| {
+            match Command::new("sh").arg("-c").arg(&cmd).output() {
+                Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
+                Err(e) => format!("Error: {}", e),
+            }
+        })
     });
 
     engine.register_fn("download_file", |url: String, output: String| -> String {
@@ -62,32 +67,92 @@ fn register_content_loader_functions(engine: &mut Engine) {
              output
         };
         
-        // Use curl for simple synchronous download
-        let status_res = Command::new("curl")
-            .arg("-L") // Follow redirects
-            .arg("-o")
-            .arg(&expanded_output)
-            .arg(&url)
-            .status();
+        tokio::task::block_in_place(move || {
+            // Use curl for simple synchronous download
+            let status_res = Command::new("curl")
+                .arg("-L") // Follow redirects
+                .arg("-o")
+                .arg(&expanded_output)
+                .arg(&url)
+                .status();
 
-        match status_res {
-            Ok(status) => {
-                if status.success() {
-                    tracing::info!(target: "slatron_node::rhai", "Download successful: {}", expanded_output);
-                } else {
-                    tracing::error!(target: "slatron_node::rhai", "Download failed with status: {}", status);
+            match status_res {
+                Ok(status) => {
+                    if status.success() {
+                        tracing::info!(target: "slatron_node::rhai", "Download successful: {}", expanded_output);
+                    } else {
+                        tracing::error!(target: "slatron_node::rhai", "Download failed with status: {}", status);
+                    }
+                }
+                Err(e) => {
+                     tracing::error!(target: "slatron_node::rhai", "Failed to execute curl: {}", e);
                 }
             }
-            Err(e) => {
-                 tracing::error!(target: "slatron_node::rhai", "Failed to execute curl: {}", e);
-            }
-        }
-        
-        expanded_output
+            expanded_output
+        })
     });
 
     engine.register_fn("get_env", |key: String| -> String {
         std::env::var(&key).unwrap_or_default()
+    });
+
+    // Capture the config path
+    let tool_path_opt = config.and_then(|c| c.screenshot_tool_path.clone());
+
+    engine.register_fn("capture_website", move |url: String, output: String| -> String {
+        use std::process::Command;
+
+        // Resolve script path
+        let mut script_path = "screenshot.js".to_string();
+
+        if let Some(cfg_path) = &tool_path_opt {
+             script_path = cfg_path.clone();
+        } else {
+            // Fallback search
+            if std::path::Path::new("slatron-node/tools/screenshot.js").exists() {
+                 script_path = "slatron-node/tools/screenshot.js".to_string();
+            } else if std::path::Path::new("tools/screenshot.js").exists() {
+                 script_path = "tools/screenshot.js".to_string();
+            }
+        }
+
+        // Expand output path
+        let expanded_output = if output.starts_with("~/") {
+            if let Ok(home) = std::env::var("HOME") {
+                output.replacen("~", &home, 1)
+            } else {
+                output
+            }
+        } else {
+             output
+        };
+
+        tracing::info!(target: "slatron_node::rhai", "Capturing website {} to {} using {}", url, expanded_output, script_path);
+
+        tokio::task::block_in_place(move || {
+            let output_res = Command::new("node")
+                .arg(&script_path)
+                .arg(&url)
+                .arg(&expanded_output)
+                .output();
+
+            match output_res {
+                Ok(output_data) => {
+                    if output_data.status.success() {
+                        tracing::info!(target: "slatron_node::rhai", "Screenshot success");
+                        expanded_output
+                    } else {
+                         let err = String::from_utf8_lossy(&output_data.stderr);
+                         tracing::error!(target: "slatron_node::rhai", "Screenshot failed: {}", err);
+                         format!("Error: {}", err)
+                    }
+                }
+                Err(e) => {
+                     tracing::error!(target: "slatron_node::rhai", "Failed to execute node script: {}", e);
+                     format!("Error: {}", e)
+                }
+            }
+        })
     });
 }
 
@@ -227,6 +292,11 @@ fn register_transformer_functions(engine: &mut Engine) {
     engine.register_fn("set_end_time", |ctx: &mut rhai::Map, seconds: f64| {
         ctx.insert("end_time".into(), rhai::Dynamic::from(seconds));
     });
+
+    // settings.path = "..."
+    engine.register_fn("set_path", |ctx: &mut rhai::Map, path: String| {
+        ctx.insert("path".into(), rhai::Dynamic::from(path));
+    });
 }
 
 pub fn execute_script_function(
@@ -235,8 +305,9 @@ pub fn execute_script_function(
     settings: &mut rhai::Map,
     args: rhai::Map,
     mpv: std::sync::Arc<crate::mpv_client::MpvClient>,
+    config: std::sync::Arc<crate::config::Config>,
 ) -> Result<(), String> {
-    let mut engine = create_engine("transformer", Some(mpv.clone()));
+    let mut engine = create_engine("transformer", Some(mpv.clone()), Some(config.clone()));
 
     // Register mpv_send
     let mpv_clone = mpv.clone();
