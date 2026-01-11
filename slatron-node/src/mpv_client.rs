@@ -103,6 +103,16 @@ impl MpvClient {
         Ok(())
     }
 
+    pub fn get_volume(&self) -> Result<f64> {
+        let response = self.send_command(json!({
+            "command": ["get_property", "volume"]
+        }))?;
+
+        response["data"]
+            .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("Invalid response"))
+    }
+
     pub fn set_volume(&self, volume: f64) -> Result<()> {
         self.send_command(json!({
             "command": ["set_property", "volume", volume]
@@ -141,6 +151,16 @@ impl MpvClient {
     pub fn add_overlay(&self, path: &str, x: i32, y: i32, opacity: f64) -> Result<()> {
         self.send_command(json!({
             "command": ["overlay-add", 0, x, y, path, opacity]
+        }))?;
+        Ok(())
+    }
+
+    pub fn screenshot(&self, path: &str) -> Result<()> {
+        // "screenshot-to-file" "<filename>" "<mode>"
+        // mode: "video" (no subtitles/osd), "window" (with osd)
+        // We probably want "video" or "subtitles" (video+subs)
+        self.send_command(json!({
+            "command": ["screenshot-to-file", path, "video"]
         }))?;
         Ok(())
     }

@@ -87,6 +87,8 @@ pub enum NodeMessage {
         target: String,
         timestamp: String,
     },
+    #[serde(rename = "screenshot")]
+    Screenshot { image_base64: String },
 }
 
 pub struct WebSocketClient {
@@ -182,6 +184,13 @@ impl WebSocketClient {
 
         tokio::spawn(async move {
             heartbeat_manager.start().await;
+        });
+
+        // Start Screenshot manager
+        let screenshot_manager =
+            crate::screenshot::ScreenshotManager::new(self.state.clone(), msg_tx.clone());
+        tokio::spawn(async move {
+            screenshot_manager.start().await;
         });
 
         // Handle incoming messages
@@ -338,9 +347,63 @@ impl WebSocketClient {
             }
             NodeCommand::InjectAudio { url, mix: _ } => {
                 tracing::info!("Command: Inject Audio {}", url);
+
+                // Audio Ducking Logic
+                let main_mpv = self.state.mpv.clone();
+                let voice_mpv = self.state.mpv_voice.clone();
+
+                // 1. Duck Main Volume
+                // Default to 100 if we can't read it
+                let current_vol = main_mpv.get_volume().unwrap_or(100.0);
+                let duck_vol = (current_vol * 0.3).max(10.0); // Duck to 30% of current, min 10
+
+                tracing::info!("Ducking volume from {} to {}", current_vol, duck_vol);
+                if let Err(e) = main_mpv.set_volume(duck_vol) {
+                    tracing::warn!("Failed to duck volume: {}", e);
+                }
+
+                // 2. Play Voice
                 // Use the dedicated 'voice' MPV instance to allow mixing/overlay.
-                if let Err(e) = self.state.mpv_voice.play(&url, None, None) {
+                if let Err(e) = voice_mpv.play(&url, None, None) {
                     tracing::error!("Failed to play injected audio on voice instance: {}", e);
+                    // If failed to play, restore volume immediately
+                    let _ = main_mpv.set_volume(current_vol);
+                } else {
+                    // 3. Monitor for Completion (Async)
+                    tokio::spawn(async move {
+                        // Wait for start (give it up to 2s to become active)
+                        let mut started = false;
+                        for _ in 0..20 {
+                            if let Ok(idle) = voice_mpv.is_idle() {
+                                if !idle {
+                                    started = true;
+                                    break;
+                                }
+                            }
+                            sleep(Duration::from_millis(100)).await;
+                        }
+
+                        if started {
+                            tracing::debug!("Voice track started. Waiting for completion...");
+                            // Wait for finish (poll until idle)
+                            // Safety: Timeout after 60s
+                            for _ in 0..600 {
+                                if let Ok(idle) = voice_mpv.is_idle() {
+                                    if idle {
+                                        break;
+                                    }
+                                }
+                                sleep(Duration::from_millis(100)).await;
+                            }
+                        } else {
+                            tracing::warn!("Voice track never started (idle timeout). Restoring.");
+                        }
+
+                        tracing::info!("Voice track finished. Restoring volume to {}", current_vol);
+                        if let Err(e) = main_mpv.set_volume(current_vol) {
+                            tracing::error!("Failed to restore volume: {}", e);
+                        }
+                    });
                 }
             }
         }

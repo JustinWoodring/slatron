@@ -50,10 +50,20 @@ export function LiveNodeGrid({ nodes, content }: LiveNodeGridProps) {
                             {/* Active Content Preview (Abstract) */}
                             {node.status === 'online' && currentContent ? (
                                 <>
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        {/* Placeholder Animation */}
-                                        <div className="w-full h-full bg-gradient-to-br from-indigo-900/40 to-black animate-pulse flex items-center justify-center">
-                                            <span className="text-4xl">📺</span>
+                                    <div className="absolute inset-0 flex items-center justify-center bg-black">
+                                        <img
+                                            src={`/screenshots/node_${node.id}.jpg?t=${node.last_heartbeat ? new Date(node.last_heartbeat).getTime() : Date.now()}`}
+                                            alt={`Node ${node.id} Screen`}
+                                            className="w-full h-full object-cover opacity-90"
+                                            onError={(e) => {
+                                                // Fallback to gradient if image fails
+                                                e.currentTarget.style.display = 'none';
+                                                e.currentTarget.nextElementSibling?.classList.remove('hidden');
+                                            }}
+                                        />
+                                        {/* Fallback Placeholder (Hidden by default) */}
+                                        <div className="hidden absolute inset-0 w-full h-full bg-gradient-to-br from-indigo-900/40 to-black animate-pulse flex items-center justify-center">
+                                            <span className="text-4xl shadow-black drop-shadow-lg">📺</span>
                                         </div>
                                     </div>
                                     {/* Progress Bar overlay */}

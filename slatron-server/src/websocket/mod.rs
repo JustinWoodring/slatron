@@ -6,13 +6,14 @@ use axum::{
     },
     response::Response,
 };
+use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
 use diesel::prelude::*;
 use futures::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
-// use std::collections::HashMap;
-// use std::sync::Arc;
-// use tokio::sync::RwLock;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 // Server → Node messages
 #[derive(Debug, Serialize, Deserialize)]
@@ -93,6 +94,8 @@ pub enum NodeMessage {
         target: String,
         timestamp: String,
     },
+    #[serde(rename = "screenshot")]
+    Screenshot { image_base64: String },
 }
 
 pub async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
@@ -253,6 +256,47 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                         target,
                                         timestamp,
                                     });
+                                }
+                            }
+                        }
+                        NodeMessage::Screenshot { image_base64 } => {
+                            if authenticated {
+                                if let Some(id) = node_id {
+                                    // Determine screenshot path
+                                    let ui_path = state_clone
+                                        .config
+                                        .server
+                                        .ui_path
+                                        .clone()
+                                        .unwrap_or_else(|| "static".to_string());
+
+                                    let screenshots_dir =
+                                        std::path::Path::new(&ui_path).join("screenshots");
+                                    if !screenshots_dir.exists() {
+                                        let _ = std::fs::create_dir_all(&screenshots_dir);
+                                    }
+
+                                    let file_path =
+                                        screenshots_dir.join(format!("node_{}.jpg", id));
+
+                                    // Decode and save
+                                    match general_purpose::STANDARD.decode(&image_base64) {
+                                        Ok(bytes) => {
+                                            if let Err(e) = std::fs::write(&file_path, &bytes) {
+                                                tracing::error!("Failed to save screenshot: {}", e);
+                                            } else {
+                                                // tracing::debug!("Saved screenshot for node {}", id);
+                                                // Update valid_screenshot boolean/timestamp?
+                                                // Currently UI just needs to fetch /screenshots/node_X.jpg
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                "Failed to decode screenshot base64: {}",
+                                                e
+                                            );
+                                        }
+                                    }
                                 }
                             }
                         }

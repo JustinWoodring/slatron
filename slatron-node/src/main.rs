@@ -4,6 +4,7 @@ mod mpv_client;
 mod playback;
 mod rhai_engine;
 mod schedule;
+mod screenshot;
 mod websocket_client;
 
 use anyhow::Result;
@@ -566,7 +567,11 @@ async fn playback_loop(state: NodeState) {
 
         if let Some(block) = block_opt {
             if block.content_id != last_content_id {
-                tracing::info!("Content changed to {:?}", block.content_id);
+                if block.content_id.is_none() {
+                    tracing::info!("Status: Entering DJ Block (Waiting for Dynamic Content)");
+                } else {
+                    tracing::info!("Content changed to {:?}", block.content_id);
+                }
                 last_content_id = block.content_id;
 
                 if let Some(content_id) = block.content_id {

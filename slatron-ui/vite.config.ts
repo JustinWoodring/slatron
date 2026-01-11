@@ -14,6 +14,10 @@ export default defineConfig({
         target: 'ws://localhost:8080',
         ws: true,
       },
+      '/screenshots': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
     },
   },
   build: {

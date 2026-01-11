@@ -28,7 +28,7 @@ pub async fn run(state: AppState) {
     let mut tick = interval(Duration::from_secs(10));
     // Track last triggered Content ID per Node ID to prevent double triggers for same song
     // Map<NodeID, (ContentID, Timestamp)>
-    let mut last_triggered_content: HashMap<i32, (i32, Instant)> = HashMap::new();
+    let last_triggered_content: Arc<Mutex<HashMap<i32, (i32, Instant)>>> = Arc::new(Mutex::new(HashMap::new()));
     // Track known content on node to detect unloads
     // Track active processing tasks to prevent stacking
     let mut last_known_content: HashMap<i32, i32> = HashMap::new();
@@ -43,7 +43,7 @@ pub async fn run(state: AppState) {
 
         if let Err(e) = process_dj_logic(
             &state, 
-            &mut last_triggered_content, 
+            last_triggered_content.clone(), 
             &mut last_known_content,
             active_generations.clone()
         ).await {
@@ -82,7 +82,7 @@ async fn check_heartbeats(state: &AppState) -> Result<(), String> {
 
 async fn process_dj_logic(
     state: &AppState,
-    last_triggered_content: &mut HashMap<i32, (i32, Instant)>,
+    last_triggered_content: Arc<Mutex<HashMap<i32, (i32, Instant)>>>,
     last_known_content: &mut HashMap<i32, i32>,
     active_generations: Arc<Mutex<HashSet<i32>>>,
 ) -> Result<(), anyhow::Error> {
@@ -140,8 +140,11 @@ async fn process_dj_logic(
         // If we already triggered for this exact content ID on this node, skip.
         // Deduplication Check at Item Level
         // If we already triggered for this exact content ID on this node...
-        if let Some((last_id, last_time)) = last_triggered_content.get(&node_id) {
-            if *last_id == current_content_id_val {
+        if let Some((last_id, last_time)) = {
+            let map = last_triggered_content.lock().unwrap();
+            map.get(&node_id).cloned()
+        } {
+            if last_id == current_content_id_val {
                 if current_content_id_val == 0 {
                     // Specific logic for Cold Start (0):
                     // If we triggered recently (< 45s), skip and let it load.
@@ -190,7 +193,7 @@ async fn process_dj_logic(
                         playback_pos, 
                         duration_seconds, 
                         remaining,
-                        last_triggered_content.get(&node_id)
+                        last_triggered_content.lock().unwrap().get(&node_id)
                     );
 
                     if duration_seconds > 0.0 {
@@ -211,7 +214,7 @@ async fn process_dj_logic(
             tracing::info!(
                 "DEBUG: Node {} is Idle/Cold. Dedupe Last: {:?}",
                 node_id,
-                last_triggered_content.get(&node_id)
+                last_triggered_content.lock().unwrap().get(&node_id)
             );
             trigger_dj = true;
         }
@@ -221,7 +224,10 @@ async fn process_dj_logic(
         }
 
         // Logic triggered. Mark as handled immediately.
-        last_triggered_content.insert(node_id, (current_content_id_val, Instant::now()));
+        {
+            let mut map = last_triggered_content.lock().unwrap();
+            map.insert(node_id, (current_content_id_val, Instant::now()));
+        }
 
         tracing::info!(
             "DEBUG: Node {} triggering DJ logic (ColdStart={})",
@@ -559,6 +565,7 @@ async fn process_dj_logic(
                         }
                     }
                     let active_generations_for_guard = active_generations.clone();
+                    let last_triggered_content_clone = last_triggered_content.clone();
 
                     // Construct Schedule Info for context injection
                     let schedule_info = if let Some(block) = active_block_info {
@@ -680,6 +687,13 @@ async fn process_dj_logic(
                                 };
                                 if let Err(e) = tx.send(ServerMessage::Command { command: load_cmd }) {
                                     tracing::error!("Failed to send LoadContent: {}", e);
+                                } else {
+                                    // SUCCESS: Update dedupe map to prevent immediate re-trigger
+                                    // The node will briefly report "Idle" or "Loading" before "Playing"
+                                    // update to (0, Now) so we hit the "Cold Start still loading" check in main loop
+                                    if let Ok(mut map) = last_triggered_content_clone.lock() {
+                                        map.insert(node_id, (0, Instant::now()));
+                                    }
                                 }
                                 
                                 // Inject TTS if available (plays over new track start)

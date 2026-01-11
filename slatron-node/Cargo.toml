@@ -23,3 +23,4 @@ reqwest = { version = "0.12.25", features = ["json", "native-tls-vendored"] }
 clap = { version = "4.5.53", features = ["derive"] }
 dialoguer = "0.12.0"
 console = "0.16.1"
+base64 = "0.21"

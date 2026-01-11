@@ -358,6 +358,11 @@ Context: {}
 {}
 
 Generate a short break (1-3 sentences) suitable for a TTS engine.
+
+CRITICAL INSTRUCTION: Check 'Recent Memories' above.
+- If you have recently discussed a specific news story, topic, fact, or anecdote, YOU MUST NOT MENTION IT AGAIN.
+- If you have run out of new topics, focus on the music, the vibe, or the artist. Do not repeat old news.
+
 IMPORTANT: You MUST use behavior tags to express emotion and pacing. Available tags: <giggle>, <laugh>, <chuckle>, <sigh>, <cough>, <sniffle>, <groan>, <yawn>, <gasp>.
 Incorporate these naturally into the dialogue to make it feel ALIVE and human-like.
 Output MUST be valid JSON with the following fields:
