@@ -166,8 +166,8 @@ DJs can be made "aware" of their environment using **Context Scripts**. These ar
 *   **Example Script**:
     ```rust
     // Get weather for station location
-    let weather = get_weather("New York");
-    return "Current weather in NY is " + weather + ". Mention it if relevant.";
+    let weather = http_get("generic.weatherapi.com/NY");
+    context += "Current weather in NY is " + weather + ". Mention it if relevant.";
     ```
 
 #### Content Loader Scripts
