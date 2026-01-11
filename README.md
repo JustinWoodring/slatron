@@ -149,7 +149,7 @@ You can configure different "Voice Providers" to power the DJ's speech:
     *   In the Slatron Dashboard, go to **Settings > AI Providers**.
     *   Add a new provider with type **Orpheus**.
     *   Set the Endpoint URL to: `http://127.0.0.1:1234/v1/completions`.
-    *   **Important**: You must compile the server with the `ml-support` feature enabled (`cargo run --features ml-support`) as Slatron handles the audio decoding (SNAC) locally.
+    *   **Important**: You must compile the server with the `ml-support` feature enabled (`cargo run --features ml-support`) as Slatron handles the audio decoding (SNAC) locally. The server when compiled with this option embeds the rather sizeable model, but obviously for space concerns it can be compiled with local orpheus support for said reason.
 
 ### Data & Configuration
 
