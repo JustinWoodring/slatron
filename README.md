@@ -2,7 +2,7 @@
   <img src="slatron-ui/public/logo.png" width="200" alt="Slatron Logo" />
   <h1>Slatron</h1>
   <p>
-    <strong>The intelligent TV station manager with adaptive AI hosts and distributed digital signage.</strong>
+    <strong>The intelligent TV station manager with adaptive AI hosts and distributed playback for DIY hackable TV stations, radio, and digital signage.</strong>
   </p>
   <p>
     <a href="https://github.com/JustinWoodring/slatron/actions/workflows/nightly.yml">
