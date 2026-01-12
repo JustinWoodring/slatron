@@ -12,6 +12,7 @@ use chrono::{Datelike, NaiveDate, NaiveTime};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::process::Child;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc::UnboundedSender, RwLock};
@@ -43,6 +44,7 @@ pub struct NodeState {
     pub active_scripts: Arc<RwLock<Vec<(String, rhai::Map)>>>,
     pub active_settings: Arc<RwLock<rhai::Map>>,
     pub schedule_update_notify: Arc<tokio::sync::Notify>,
+    pub schedule_dirty: Arc<AtomicBool>,
 }
 
 // Log Visitor to extract message
@@ -361,6 +363,7 @@ async fn main() -> Result<()> {
         active_scripts: Arc::new(RwLock::new(Vec::new())),
         active_settings: Arc::new(RwLock::new(rhai::Map::new())),
         schedule_update_notify: Arc::new(tokio::sync::Notify::new()),
+        schedule_dirty: Arc::new(AtomicBool::new(false)),
     };
 
     // Start WebSocket client
@@ -423,6 +426,26 @@ async fn poll_schedule(state: NodeState) {
 
     // 3. Aligned Polling Loop
     loop {
+        // Clear dirty flag before checking or sleeping, to ensure we catch updates during this cycle
+        // But if we clear here, and an update happened *just before*, we fetch below.
+        // If an update happens *during* fetch, the flag will be set again.
+        state.schedule_dirty.store(false, Ordering::Relaxed);
+
+        // Fetch
+        if let Some(id) = *state.node_id.read().await {
+            fetch_and_update_schedule(&client, &state, id).await;
+        } else {
+            // If lost connection/id, wait a bit
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            continue;
+        }
+
+        // Check if dirty again (update happened during fetch)
+        if state.schedule_dirty.load(Ordering::Relaxed) {
+            tracing::info!("Schedule update received during fetch, reloading immediately.");
+            continue;
+        }
+
         // Calculate sleep time to align with next interval boundary
         let now = chrono::Utc::now();
         let current_secs = now.timestamp() as u64; // Unix timestamp in seconds
@@ -455,14 +478,8 @@ async fn poll_schedule(state: NodeState) {
             _ = tokio::time::sleep(sleep_duration) => {},
             _ = state.schedule_update_notify.notified() => {
                  tracing::info!("Forced schedule update triggered");
+                 // Loop will continue and fetch immediately
             }
-        }
-
-        // Re-read node_id in case it changed (unlikely but safe)
-        if let Some(id) = *state.node_id.read().await {
-            fetch_and_update_schedule(&client, &state, id).await;
-        } else {
-            // If lost connection/id, go back to wait loop? Or just wait.
         }
     }
 }

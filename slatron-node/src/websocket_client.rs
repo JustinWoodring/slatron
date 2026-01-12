@@ -1,6 +1,7 @@
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -236,6 +237,7 @@ impl WebSocketClient {
             }
             ServerMessage::ScheduleUpdated { timestamp } => {
                 tracing::info!("Schedule updated at {}", timestamp);
+                self.state.schedule_dirty.store(true, Ordering::Relaxed);
                 self.state.schedule_update_notify.notify_waiters();
             }
             ServerMessage::Command { command } => {
@@ -329,6 +331,7 @@ impl WebSocketClient {
             }
             NodeCommand::ReloadSchedule => {
                 tracing::info!("Command: Reload schedule");
+                self.state.schedule_dirty.store(true, Ordering::Relaxed);
                 self.state.schedule_update_notify.notify_waiters();
             }
             NodeCommand::Shutdown => {
