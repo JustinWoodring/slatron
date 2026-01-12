@@ -283,12 +283,11 @@ impl ScriptService {
         let schedule_dynamic = if let Some(info) = schedule_info_arg {
             rhai::serde::to_dynamic(info).unwrap_or(Dynamic::UNIT)
         } else {
-            // Fetch active schedule block for this DJ from DB
-            match fetch_active_schedule_block(&mut conn, dj_profile.id, &server_tz_setting) {
-                Ok(Some(info)) => rhai::serde::to_dynamic(info).unwrap_or(Dynamic::UNIT),
-                Ok(None) => Dynamic::UNIT,
+            // Fetch active schedule block and upcoming context
+            match fetch_schedule_context(&mut conn, dj_profile.id, &server_tz_setting) {
+                Ok(info) => rhai::serde::to_dynamic(info).unwrap_or(Dynamic::UNIT),
                 Err(e) => {
-                    tracing::error!("Failed to fetch schedule block: {}", e);
+                    tracing::error!("Failed to fetch schedule context: {}", e);
                     Dynamic::UNIT
                 }
             }
@@ -636,17 +635,17 @@ impl ScriptService {
     }
 }
 
-// Helper to fetch the active schedule block
-fn fetch_active_schedule_block(
+// Helper to fetch the active schedule block and upcoming context
+fn fetch_schedule_context(
     conn: &mut crate::db::DbConnection,
     dj_profile_id: Option<i32>,
     tz_setting: &str,
-) -> Result<Option<serde_json::Value>> {
-    use crate::schema::{schedule_blocks, schedules};
+) -> Result<serde_json::Value> {
+    use crate::schema::{dj_profiles, schedule_blocks, schedules};
 
     let dj_id_val = match dj_profile_id {
         Some(id) => id,
-        None => return Ok(None),
+        None => return Ok(serde_json::json!({})),
     };
 
     // Calculate current time/date
@@ -657,31 +656,22 @@ fn fetch_active_schedule_block(
     let current_time = now.time();
     let current_dow = current_date.weekday().num_days_from_monday() as i32;
 
-    // Check Yesterday as well for spill-over blocks?
-    // For simplicity, we will check blocks starting today first.
-    // Handling spill-over logic (blocks starting yesterday and crossing midnight)
-    // is consistent with `schedule_service.rs`.
     let yesterday_date = current_date.pred_opt().unwrap();
     let yesterday_dow = yesterday_date.weekday().num_days_from_monday() as i32;
 
-    // We fetch potential blocks:
-    // 1. Where Schedule matches the DJ (either block.dj_id or schedule.dj_id)
-    // 2. Schedule is active
-    // 3. Block matches date/dow
+    // --- 1. Active Block Logic ---
+    let mut active_block_json = serde_json::Value::Null;
+    let mut time_remaining = serde_json::Value::Null;
 
-    // Note: Diesel join syntax
-    let results: Vec<(ScheduleBlock, Schedule)> = schedule_blocks::table
+    let active_candidates: Vec<(ScheduleBlock, Schedule)> = schedule_blocks::table
         .inner_join(schedules::table)
         .filter(schedules::is_active.eq(true))
         .filter(
-            // DJ Logic: Block specific DJ OR (Block DJ null AND Schedule DJ matches)
             (schedule_blocks::dj_id.eq(dj_id_val)).or(schedule_blocks::dj_id
                 .is_null()
                 .and(schedules::dj_id.eq(dj_id_val))),
         )
         .filter(
-            // Filter by date/dow to optimize query
-            // (Weekly AND dow IN (today, yesterday)) OR (One-off AND date IN (today, yesterday))
             (schedules::schedule_type
                 .eq("weekly")
                 .and(schedule_blocks::day_of_week.eq_any(vec![current_dow, yesterday_dow])))
@@ -692,11 +682,9 @@ fn fetch_active_schedule_block(
         .select((ScheduleBlock::as_select(), Schedule::as_select()))
         .load(conn)?;
 
-    // Filter in-memory for time match
-    for (block, schedule) in results {
+    for (block, schedule) in active_candidates {
         let is_match = match schedule.schedule_type.as_str() {
             "weekly" => {
-                // Check if block is for Today or Yesterday
                 if block.day_of_week == Some(current_dow) {
                     is_time_match(block.start_time, block.duration_minutes, current_time, 0)
                 } else if block.day_of_week == Some(yesterday_dow) {
@@ -718,27 +706,108 @@ fn fetch_active_schedule_block(
         };
 
         if is_match {
-            // Found active block!
-            // Construct response JSON
-            let block_json = serde_json::json!({
+            active_block_json = serde_json::json!({
                 "id": block.id,
                 "name": schedule.name,
                 "start_time": block.start_time.format("%H:%M:%S").to_string(),
                 "duration_minutes": block.duration_minutes,
-                "dj_id": dj_id_val, // Since we filtered for it
+                "dj_id": dj_id_val,
                 "schedule_id": schedule.id,
             });
 
-            // We could also populate 'upcoming' or 'time_remaining'
-            // For now, let's include basic block info.
-            return Ok(Some(serde_json::json!({
-                "block": block_json,
-                "time_remaining_minutes": calculate_remaining_minutes(block.start_time, block.duration_minutes, current_time, if block.day_of_week == Some(yesterday_dow) || block.specific_date == Some(yesterday_date) { 1 } else { 0 })
-            })));
+            let day_offset =
+                if block.day_of_week == Some(yesterday_dow) || block.specific_date == Some(yesterday_date) {
+                    1
+                } else {
+                    0
+                };
+
+            time_remaining = serde_json::json!(calculate_remaining_minutes(
+                block.start_time,
+                block.duration_minutes,
+                current_time,
+                day_offset
+            ));
+            break; // Found the active one
         }
     }
 
-    Ok(None)
+    // --- 2. Upcoming Blocks Logic ---
+    // Fetch next 5 active blocks starting after current time today
+    // We join with dj_profiles (left join) to get DJ Name if available.
+    // Note: dj_profiles::dsl::id is nullable if we join it?
+    // Actually, schedule_blocks.dj_id is nullable. schedule.dj_id is nullable.
+    // Ideally we want the "effective DJ name".
+    // Doing complex effective DJ resolution in SQL with Diesel left joins can be verbose.
+    // We will just fetch (Block, Schedule) and then map DJ names in memory or simple join if possible.
+    // Let's stick to (Block, Schedule) for now and maybe fetch DJ names separately if needed,
+    // or just return DJ ID. The prompt implies "DJ might know about other stuff", so names are useful.
+    // Let's try to left join `dj_profiles` on `schedule_blocks.dj_id`.
+
+    // Simple query first: Upcoming blocks today.
+    // Ignoring "one_off" vs "weekly" logic for future dates for simplicity - just "today".
+    // Logic:
+    // (Weekly & DOW=Today & Start > Now) OR (OneOff & Date=Today & Start > Now)
+    // Order by StartTime ASC Limit 5.
+
+    let upcoming_data: Vec<(ScheduleBlock, Schedule)> = schedule_blocks::table
+        .inner_join(schedules::table)
+        .filter(schedules::is_active.eq(true))
+        .filter(schedule_blocks::start_time.gt(current_time))
+        .filter(
+            (schedules::schedule_type
+                .eq("weekly")
+                .and(schedule_blocks::day_of_week.eq(current_dow)))
+            .or(schedules::schedule_type
+                .eq("one_off")
+                .and(schedule_blocks::specific_date.eq(current_date))),
+        )
+        .order(schedule_blocks::start_time.asc())
+        .limit(5)
+        .select((ScheduleBlock::as_select(), Schedule::as_select()))
+        .load(conn)?;
+
+    let mut upcoming_blocks_json = Vec::new();
+
+    // Optimization: Collect DJ IDs to fetch names
+    let mut dj_ids_to_fetch = Vec::new();
+    for (b, s) in &upcoming_data {
+        if let Some(did) = b.dj_id { dj_ids_to_fetch.push(did); }
+        else if let Some(did) = s.dj_id { dj_ids_to_fetch.push(did); }
+    }
+    dj_ids_to_fetch.sort();
+    dj_ids_to_fetch.dedup();
+
+    let mut dj_map = std::collections::HashMap::new();
+    if !dj_ids_to_fetch.is_empty() {
+        let djs = dj_profiles::table
+            .filter(dj_profiles::id.eq_any(dj_ids_to_fetch))
+            .select((dj_profiles::id, dj_profiles::name))
+            .load::<(Option<i32>, String)>(conn)?;
+        for (id, name) in djs {
+            if let Some(i) = id {
+                dj_map.insert(i, name);
+            }
+        }
+    }
+
+    for (block, schedule) in upcoming_data {
+        let effective_dj_id = block.dj_id.or(schedule.dj_id);
+        let dj_name = effective_dj_id.and_then(|id| dj_map.get(&id).cloned());
+
+        upcoming_blocks_json.push(serde_json::json!({
+            "name": schedule.name,
+            "start_time": block.start_time.format("%H:%M:%S").to_string(),
+            "duration_minutes": block.duration_minutes,
+            "dj_name": dj_name,
+        }));
+    }
+
+    Ok(serde_json::json!({
+        "block": active_block_json,
+        "time_remaining_minutes": time_remaining,
+        "upcoming_blocks": upcoming_blocks_json
+    }))
 }
 
 fn is_time_match(
