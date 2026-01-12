@@ -42,6 +42,7 @@ pub struct NodeState {
     pub global_settings: Arc<RwLock<HashMap<String, String>>>,
     pub active_scripts: Arc<RwLock<Vec<(String, rhai::Map)>>>,
     pub active_settings: Arc<RwLock<rhai::Map>>,
+    pub schedule_update_notify: Arc<tokio::sync::Notify>,
 }
 
 // Log Visitor to extract message
@@ -359,6 +360,7 @@ async fn main() -> Result<()> {
         global_settings: Arc::new(RwLock::new(HashMap::new())),
         active_scripts: Arc::new(RwLock::new(Vec::new())),
         active_settings: Arc::new(RwLock::new(rhai::Map::new())),
+        schedule_update_notify: Arc::new(tokio::sync::Notify::new()),
     };
 
     // Start WebSocket client
@@ -449,7 +451,12 @@ async fn poll_schedule(state: NodeState) {
         };
 
         // tracing::debug!("Sleeping for {:?} until next aligned poll", sleep_duration);
-        tokio::time::sleep(sleep_duration).await;
+        tokio::select! {
+            _ = tokio::time::sleep(sleep_duration) => {},
+            _ = state.schedule_update_notify.notified() => {
+                 tracing::info!("Forced schedule update triggered");
+            }
+        }
 
         // Re-read node_id in case it changed (unlikely but safe)
         if let Some(id) = *state.node_id.read().await {
