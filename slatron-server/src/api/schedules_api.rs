@@ -224,6 +224,15 @@ pub async fn create_schedule_block(
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Validate duration and end of day
+    if new_block.duration_minutes <= 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let start_mins = new_block.start_time.num_seconds_from_midnight() as i32 / 60;
+    if start_mins + new_block.duration_minutes > 1440 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     // Check overlap
     let has_overlap = check_overlap(
         &mut conn,
@@ -267,6 +276,15 @@ pub async fn update_schedule_block(
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Validate duration and end of day
+    if updates.duration_minutes <= 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let start_mins = updates.start_time.num_seconds_from_midnight() as i32 / 60;
+    if start_mins + updates.duration_minutes > 1440 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
 
     // Check overlap
     let has_overlap = check_overlap(

@@ -241,68 +241,71 @@ async fn process_dj_logic(
         // 1. Check for Node-Specific Schedule
         use crate::schema::node_schedules::dsl as ns_dsl;
 
-        // Find schedule assigned to this node with highest priority
-        let node_schedule_opt = ns_dsl::node_schedules
+        // Find all schedules assigned to this node, ordered by priority
+        let node_schedules_all = ns_dsl::node_schedules
             .filter(ns_dsl::node_id.eq(node_id))
             .inner_join(s_dsl::schedules)
             .filter(s_dsl::is_active.eq(true))
             .order(ns_dsl::priority.desc())
             .select(crate::models::Schedule::as_select())
-            .first::<crate::models::Schedule>(&mut conn)
-            .optional()?;
+            .load::<crate::models::Schedule>(&mut conn)?;
 
-        let active_schedule = if let Some(ns) = node_schedule_opt {
-            Some(ns)
-        } else {
-            // 2. Fallback to Global Default
-            s_dsl::schedules
-                .filter(s_dsl::is_active.eq(true))
-                .order(s_dsl::priority.desc())
-                .first::<crate::models::Schedule>(&mut conn)
-                .optional()?
-        };
+        // Find all active global schedules as a fallback base
+        let global_schedules = s_dsl::schedules
+            .filter(s_dsl::is_active.eq(true))
+            .order(s_dsl::priority.desc())
+            .load::<crate::models::Schedule>(&mut conn)?;
+
+        // Combine: Node Specific (Higher Priority) -> Global (Lower Priority)
+        let mut candidate_map: HashMap<i32, crate::models::Schedule> = HashMap::new();
+        // Insert globals first
+        for s in global_schedules {
+            if let Some(sid) = s.id { candidate_map.insert(sid, s); }
+        }
+        // Insert node schedules (overwriting if same ID)
+        for s in node_schedules_all {
+             if let Some(sid) = s.id { candidate_map.insert(sid, s); }
+        }
+        
+        let mut active_schedules: Vec<crate::models::Schedule> = candidate_map.into_values().collect();
+        // Sort by Priority Descending
+        active_schedules.sort_by(|a, b| b.priority.cmp(&a.priority));
 
         let mut dj_profile_opt: Option<DjProfile> = None;
         let mut active_block_script: Option<String> = None;
         let mut active_block_info: Option<serde_json::Value> = None;
 
-        // 1. Check Schedule for Default DJ
-        if let Some(schedule) = &active_schedule {
-            if let Some(sched_dj_id) = schedule.dj_id {
-                dj_profile_opt = dj_dsl::dj_profiles
-                    .filter(dj_dsl::id.eq(sched_dj_id))
-                    .first::<DjProfile>(&mut conn)
-                    .optional()?;
-            }
+        let mut active_schedule: Option<crate::models::Schedule> = None;
 
-            // 2. Check for Active Block Override (DJ + Script)
+        // Fetch Timezone
+        use crate::schema::global_settings::dsl::{global_settings, key, value};
+        use chrono::{Datelike, Timelike};
+        use chrono_tz::Tz;
+
+        let timezone_setting: Option<String> = global_settings
+            .filter(key.eq("timezone"))
+            .select(value)
+            .first(&mut conn)
+            .optional()
+            .unwrap_or(None);
+
+        let tz: Tz = timezone_setting
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(chrono_tz::UTC);
+        
+        let now_utc = Utc::now();
+        let now_target = now_utc.with_timezone(&tz);
+        let current_time = now_target.time();
+        let current_dow = now_target.weekday().number_from_monday() as i32 - 1;
+        let current_date = now_target.date_naive();
+        
+        // CASCADING SCHEDULE CHECK
+        for schedule in active_schedules {
             if let Some(sched_id) = schedule.id {
                 use crate::models::{ScheduleBlock, Script};
                 use crate::schema::schedule_blocks::dsl as sb_dsl;
                 use crate::schema::scripts::dsl as sc_dsl;
-                use chrono::{Datelike, Timelike};
-
-                use crate::schema::global_settings::dsl::{global_settings, key, value};
-                use chrono_tz::Tz;
-
-                // Fetch Timezone
-                let timezone_setting: Option<String> = global_settings
-                    .filter(key.eq("timezone"))
-                    .select(value)
-                    .first(&mut conn)
-                    .optional()
-                    .unwrap_or(None);
-
-                let tz: Tz = timezone_setting
-                    .as_deref()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(chrono_tz::UTC);
-
-                let now_utc = Utc::now();
-                let now_target = now_utc.with_timezone(&tz);
-                let current_time = now_target.time();
-                let current_dow = now_target.weekday().number_from_monday() as i32 - 1;
-                let current_date = now_target.date_naive();
 
                 let blocks = sb_dsl::schedule_blocks
                     .filter(sb_dsl::schedule_id.eq(sched_id))
@@ -319,7 +322,7 @@ async fn process_dj_logic(
                     };
 
                     if !matches_day {
-                        return false;
+                         return false;
                     }
 
                     let start = b.start_time;
@@ -327,56 +330,40 @@ async fn process_dj_logic(
                     let end_secs = start_secs + (b.duration_minutes as u32 * 60);
                     let curr_secs = current_time.num_seconds_from_midnight();
 
-                    let is_match = curr_secs >= start_secs && curr_secs < end_secs;
-                    is_match
+                    curr_secs >= start_secs && curr_secs < end_secs
                 });
 
                 if let Some(block) = active_block {
-                    // Calculate Time Remaining
+                    // FOUND ACTIVE BLOCK! This schedule wins.
+                    active_schedule = Some(schedule.clone());
+                    
+                    // Populate Block Info
                     let start = block.start_time;
                     let start_secs = start.num_seconds_from_midnight();
                     let end_secs = start_secs + (block.duration_minutes as u32 * 60);
                     let curr_secs = current_time.num_seconds_from_midnight();
                     let remaining_mins = (end_secs as i64 - curr_secs as i64) / 60;
                     
-                    // Filter Upcoming Items (Next 3 blocks today)
+                    // Upcoming... 
                     let items: Vec<&ScheduleBlock> = blocks.iter()
                         .filter(|b| {
-                            // Match day
-                            let matches_day = if let Some(d) = b.specific_date {
-                                d == current_date
-                            } else if let Some(dow) = b.day_of_week {
-                                dow == current_dow
-                            } else {
-                                false
-                            };
+                            let matches_day = if let Some(d) = b.specific_date { d == current_date } 
+                            else if let Some(dow) = b.day_of_week { dow == current_dow } else { false };
                             if !matches_day { return false; }
-                            
-                            // Must start AFTER current block starts (so we can see subsequent blocks)
-                            // Actually better: start time must be >= current time?
-                            // Or just start time > active block start time?
-                            // Let's rely on standard ordering
                             b.start_time > block.start_time
                         })
-                        .into_iter() // Convert refs to values? No, we need sorting.
-                        // Can't sort references easily without collecting
-                        // But wait, `blocks` from DB might not be sorted by time.
-                        // We should sort first or collect and sort.
                         .collect::<Vec<&ScheduleBlock>>();
                     
-                    // Sort by time
                     let mut upcoming_refs = items;
                     upcoming_refs.sort_by_key(|b| b.start_time);
-                    
                     let upcoming_json: Vec<serde_json::Value> = upcoming_refs.into_iter().take(3).map(|b| {
                         serde_json::json!({
-                           "title": format!("Block {}", b.id.unwrap_or(0)), // TODO: Add name/title to schedule_blocks schema
+                           "title": format!("Block {}", b.id.unwrap_or(0)),
                            "start_time": b.start_time.to_string(),
                            "content_type": "block"
                         })
                     }).collect();
 
-                    // Populate Info
                     active_block_info = Some(serde_json::json!({
                         "block": {
                             "id": block.id,
@@ -391,46 +378,46 @@ async fn process_dj_logic(
 
                     // Block DJ Override
                     if let Some(blk_dj_id) = block.dj_id {
-                        if let Ok(blk_dj) = dj_dsl::dj_profiles
-                            .filter(dj_dsl::id.eq(blk_dj_id))
-                            .first::<DjProfile>(&mut conn)
-                        {
-                            dj_profile_opt = Some(blk_dj);
-                        }
+                         dj_profile_opt = dj_dsl::dj_profiles.filter(dj_dsl::id.eq(blk_dj_id)).first::<DjProfile>(&mut conn).optional()?;
                     }
-
-                    // Context Script
+                    // Block Script
                     if let Some(sid) = block.script_id {
-                        if let Ok(script) = sc_dsl::scripts
-                            .filter(sc_dsl::id.eq(sid))
-                            .first::<Script>(&mut conn)
-                        {
-                            active_block_script = Some(script.script_content);
+                         if let Ok(script) = sc_dsl::scripts.filter(sc_dsl::id.eq(sid)).first::<Script>(&mut conn) {
+                             active_block_script = Some(script.script_content);
+                         }
+                    }
+                    
+                    // Fallback to Schedule DJ if block didn't specify
+                    if dj_profile_opt.is_none() {
+                        if let Some(sched_dj_id) = schedule.dj_id {
+                             dj_profile_opt = dj_dsl::dj_profiles.filter(dj_dsl::id.eq(sched_dj_id)).first::<DjProfile>(&mut conn).optional()?;
                         }
                     }
-                } else {
-                    // If Trigger was 'Cold Start' but NO active block matches time?
-                    // Then we shouldn't play anything. It's off-air time.
-                    if node.current_content_id.is_none() {
-                        tracing::info!("DEBUG: Cold start aborted - no active block.");
-                        continue;
-                    } else {
-                        // If we are currently playing content, but the block ended/no block matches:
-                        // We must STOP/PAUSE the node.
-                        tracing::info!("Node {} outside of active block. Stopping playback.", node_id);
-                        
-                        let nodes_map = state.connected_nodes.read().await;
-                        if let Some(tx) = nodes_map.get(&node_id) {
-                            let cmd = NodeCommand::Pause; // Send Pause to stop
-                            if let Err(e) = tx.send(ServerMessage::Command { command: cmd }) {
-                                tracing::error!("Failed to send Stop/Pause: {}", e);
-                            }
-                        }
-                        
-                        // We also need to avoid triggering the fallback DJ below
-                        continue;
+                    
+                    break; // STOP here, we found our block.
+                }
+            }
+        }
+
+        // If after checking ALL active schedules we found nothing...
+        if active_schedule.is_none() {
+             // If Trigger was 'Cold Start' but NO active block matches time across ANY active schedule?
+             // Then we shouldn't play anything. It's off-air time.
+             if node.current_content_id.is_none() {
+                tracing::info!("DEBUG: Cold start aborted - no active block found in any schedule.");
+                continue;
+            } else {
+                // If we are currently playing content, but the block ended/no block matches:
+                // We must STOP/PAUSE the node.
+                tracing::info!("Node {} outside of active block. Stopping playback.", node_id);
+                let nodes_map = state.connected_nodes.read().await;
+                if let Some(tx) = nodes_map.get(&node_id) {
+                    let cmd = NodeCommand::Pause; 
+                    if let Err(e) = tx.send(ServerMessage::Command { command: cmd }) {
+                        tracing::error!("Failed to send Stop/Pause: {}", e);
                     }
                 }
+                continue;
             }
         }
 
