@@ -216,6 +216,9 @@ async fn main() -> Result<()> {
     // Spawn heartbeat monitor
     tokio::spawn(services::heartbeat_monitor::run(state.clone()));
 
+    // Spawn TTS cleanup task
+    tokio::spawn(services::tts_cleanup::run());
+
     // Get address before moving state
     let addr = format!("{}:{}", state.config.server.host, state.config.server.port);
 
