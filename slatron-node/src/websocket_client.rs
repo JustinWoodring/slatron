@@ -236,7 +236,7 @@ impl WebSocketClient {
             }
             ServerMessage::ScheduleUpdated { timestamp } => {
                 tracing::info!("Schedule updated at {}", timestamp);
-                // TODO: Reload schedule from server
+                self.state.schedule_update_notify.notify_waiters();
             }
             ServerMessage::Command { command } => {
                 tracing::info!("Received command: {:?}", command);
@@ -329,7 +329,7 @@ impl WebSocketClient {
             }
             NodeCommand::ReloadSchedule => {
                 tracing::info!("Command: Reload schedule");
-                // Polling loop will pick it up
+                self.state.schedule_update_notify.notify_waiters();
             }
             NodeCommand::Shutdown => {
                 tracing::info!("Command: Shutdown");
