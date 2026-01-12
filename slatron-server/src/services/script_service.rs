@@ -1,10 +1,10 @@
 use anyhow::Result;
-use chrono::Local;
+use chrono::{Datelike, Local, Timelike};
 use diesel::prelude::*;
 use rhai::{Dynamic, Engine, Scope};
 use std::sync::Arc;
 
-use crate::models::{ContentItem, DjProfile};
+use crate::models::{ContentItem, DjProfile, Schedule, ScheduleBlock};
 use crate::AppState;
 
 #[derive(Debug, Clone)]
@@ -283,9 +283,14 @@ impl ScriptService {
         let schedule_dynamic = if let Some(info) = schedule_info_arg {
             rhai::serde::to_dynamic(info).unwrap_or(Dynamic::UNIT)
         } else {
-            // TODO: Fetch active schedule block for this DJ from DB
-            // For now, defaulting to UNIT until we implement the query logic or helper
-            Dynamic::UNIT
+            // Fetch active schedule block and upcoming context
+            match fetch_schedule_context(&mut conn, dj_profile.id, &server_tz_setting) {
+                Ok(info) => rhai::serde::to_dynamic(info).unwrap_or(Dynamic::UNIT),
+                Err(e) => {
+                    tracing::error!("Failed to fetch schedule context: {}", e);
+                    Dynamic::UNIT
+                }
+            }
         };
 
         // Prepare Output
@@ -627,5 +632,240 @@ impl ScriptService {
             }
             Err(e) => Err(anyhow::anyhow!("Compilation Error: {}", e)),
         }
+    }
+}
+
+// Helper to fetch the active schedule block and upcoming context
+fn fetch_schedule_context(
+    conn: &mut crate::db::DbConnection,
+    dj_profile_id: Option<i32>,
+    tz_setting: &str,
+) -> Result<serde_json::Value> {
+    use crate::schema::{dj_profiles, schedule_blocks, schedules};
+
+    let dj_id_val = match dj_profile_id {
+        Some(id) => id,
+        None => return Ok(serde_json::json!({})),
+    };
+
+    // Calculate current time/date
+    let tz: chrono_tz::Tz = tz_setting.parse().unwrap_or(chrono_tz::UTC);
+    let now = chrono::Utc::now().with_timezone(&tz);
+
+    let current_date = now.date_naive();
+    let current_time = now.time();
+    let current_dow = current_date.weekday().num_days_from_monday() as i32;
+
+    let yesterday_date = current_date.pred_opt().unwrap();
+    let yesterday_dow = yesterday_date.weekday().num_days_from_monday() as i32;
+
+    // --- 1. Active Block Logic ---
+    let mut active_block_json = serde_json::Value::Null;
+    let mut time_remaining = serde_json::Value::Null;
+
+    let active_candidates: Vec<(ScheduleBlock, Schedule)> = schedule_blocks::table
+        .inner_join(schedules::table)
+        .filter(schedules::is_active.eq(true))
+        .filter(
+            (schedule_blocks::dj_id.eq(dj_id_val)).or(schedule_blocks::dj_id
+                .is_null()
+                .and(schedules::dj_id.eq(dj_id_val))),
+        )
+        .filter(
+            (schedules::schedule_type
+                .eq("weekly")
+                .and(schedule_blocks::day_of_week.eq_any(vec![current_dow, yesterday_dow])))
+            .or(schedules::schedule_type
+                .eq("one_off")
+                .and(schedule_blocks::specific_date.eq_any(vec![current_date, yesterday_date]))),
+        )
+        .select((ScheduleBlock::as_select(), Schedule::as_select()))
+        .load(conn)?;
+
+    for (block, schedule) in active_candidates {
+        let is_match = match schedule.schedule_type.as_str() {
+            "weekly" => {
+                if block.day_of_week == Some(current_dow) {
+                    is_time_match(block.start_time, block.duration_minutes, current_time, 0)
+                } else if block.day_of_week == Some(yesterday_dow) {
+                    is_time_match(block.start_time, block.duration_minutes, current_time, 1)
+                } else {
+                    false
+                }
+            }
+            "one_off" => {
+                if block.specific_date == Some(current_date) {
+                    is_time_match(block.start_time, block.duration_minutes, current_time, 0)
+                } else if block.specific_date == Some(yesterday_date) {
+                    is_time_match(block.start_time, block.duration_minutes, current_time, 1)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+
+        if is_match {
+            active_block_json = serde_json::json!({
+                "id": block.id,
+                "name": schedule.name,
+                "start_time": block.start_time.format("%H:%M:%S").to_string(),
+                "duration_minutes": block.duration_minutes,
+                "dj_id": dj_id_val,
+                "schedule_id": schedule.id,
+            });
+
+            let day_offset =
+                if block.day_of_week == Some(yesterday_dow) || block.specific_date == Some(yesterday_date) {
+                    1
+                } else {
+                    0
+                };
+
+            time_remaining = serde_json::json!(calculate_remaining_minutes(
+                block.start_time,
+                block.duration_minutes,
+                current_time,
+                day_offset
+            ));
+            break; // Found the active one
+        }
+    }
+
+    // --- 2. Upcoming Blocks Logic ---
+    // Fetch next 5 active blocks starting after current time today
+    // We join with dj_profiles (left join) to get DJ Name if available.
+    // Note: dj_profiles::dsl::id is nullable if we join it?
+    // Actually, schedule_blocks.dj_id is nullable. schedule.dj_id is nullable.
+    // Ideally we want the "effective DJ name".
+    // Doing complex effective DJ resolution in SQL with Diesel left joins can be verbose.
+    // We will just fetch (Block, Schedule) and then map DJ names in memory or simple join if possible.
+    // Let's stick to (Block, Schedule) for now and maybe fetch DJ names separately if needed,
+    // or just return DJ ID. The prompt implies "DJ might know about other stuff", so names are useful.
+    // Let's try to left join `dj_profiles` on `schedule_blocks.dj_id`.
+
+    // Simple query first: Upcoming blocks today.
+    // Ignoring "one_off" vs "weekly" logic for future dates for simplicity - just "today".
+    // Logic:
+    // (Weekly & DOW=Today & Start > Now) OR (OneOff & Date=Today & Start > Now)
+    // Order by StartTime ASC Limit 5.
+
+    let upcoming_data: Vec<(ScheduleBlock, Schedule)> = schedule_blocks::table
+        .inner_join(schedules::table)
+        .filter(schedules::is_active.eq(true))
+        .filter(schedule_blocks::start_time.gt(current_time))
+        .filter(
+            (schedules::schedule_type
+                .eq("weekly")
+                .and(schedule_blocks::day_of_week.eq(current_dow)))
+            .or(schedules::schedule_type
+                .eq("one_off")
+                .and(schedule_blocks::specific_date.eq(current_date))),
+        )
+        .order(schedule_blocks::start_time.asc())
+        .limit(5)
+        .select((ScheduleBlock::as_select(), Schedule::as_select()))
+        .load(conn)?;
+
+    let mut upcoming_blocks_json = Vec::new();
+
+    // Optimization: Collect DJ IDs to fetch names
+    let mut dj_ids_to_fetch = Vec::new();
+    for (b, s) in &upcoming_data {
+        if let Some(did) = b.dj_id { dj_ids_to_fetch.push(did); }
+        else if let Some(did) = s.dj_id { dj_ids_to_fetch.push(did); }
+    }
+    dj_ids_to_fetch.sort();
+    dj_ids_to_fetch.dedup();
+
+    let mut dj_map = std::collections::HashMap::new();
+    if !dj_ids_to_fetch.is_empty() {
+        let djs = dj_profiles::table
+            .filter(dj_profiles::id.eq_any(dj_ids_to_fetch))
+            .select((dj_profiles::id, dj_profiles::name))
+            .load::<(Option<i32>, String)>(conn)?;
+        for (id, name) in djs {
+            if let Some(i) = id {
+                dj_map.insert(i, name);
+            }
+        }
+    }
+
+    for (block, schedule) in upcoming_data {
+        let effective_dj_id = block.dj_id.or(schedule.dj_id);
+        let dj_name = effective_dj_id.and_then(|id| dj_map.get(&id).cloned());
+
+        upcoming_blocks_json.push(serde_json::json!({
+            "name": schedule.name,
+            "start_time": block.start_time.format("%H:%M:%S").to_string(),
+            "duration_minutes": block.duration_minutes,
+            "dj_name": dj_name,
+        }));
+    }
+
+    Ok(serde_json::json!({
+        "block": active_block_json,
+        "time_remaining_minutes": time_remaining,
+        "upcoming_blocks": upcoming_blocks_json
+    }))
+}
+
+fn is_time_match(
+    start: chrono::NaiveTime,
+    duration_min: i32,
+    now: chrono::NaiveTime,
+    day_offset: i32, // 0 = same day, 1 = start was yesterday
+) -> bool {
+    let start_secs = start.num_seconds_from_midnight();
+    let now_secs = now.num_seconds_from_midnight();
+    let duration_secs = (duration_min as u32) * 60;
+
+    if day_offset == 0 {
+        // Starts today.
+        // Match if now >= start AND now < start + duration
+        // Note: start + duration can exceed 24h (86400), but now_secs is always < 86400.
+        // So we just check strictly.
+        // If duration wraps midnight, it continues to next day (which is covered by day_offset=1 check tomorrow)
+        // But for "Today", we only care if we are in the portion that is Today.
+        // Wait, if start=23:00, dur=120 (2 hours), it ends 01:00 tomorrow.
+        // If now=23:30, it matches.
+        let end_secs = start_secs + duration_secs;
+        now_secs >= start_secs && now_secs < end_secs
+    } else {
+        // Starts yesterday.
+        // Match if now < (start + duration - 24h)
+        // i.e. spilled over part.
+        let end_secs = start_secs + duration_secs;
+        if end_secs > 86400 {
+            // It spills over
+            let spill_secs = end_secs - 86400;
+            now_secs < spill_secs
+        } else {
+            false
+        }
+    }
+}
+
+fn calculate_remaining_minutes(
+    start: chrono::NaiveTime,
+    duration_min: i32,
+    now: chrono::NaiveTime,
+    day_offset: i32,
+) -> i32 {
+    let start_secs = start.num_seconds_from_midnight();
+    let now_secs = now.num_seconds_from_midnight();
+    let duration_secs = (duration_min as u32) * 60;
+
+    let end_secs_absolute = start_secs + duration_secs; // Relative to start day midnight
+    let now_secs_absolute = if day_offset == 1 {
+        now_secs + 86400
+    } else {
+        now_secs
+    };
+
+    if now_secs_absolute < end_secs_absolute {
+        ((end_secs_absolute - now_secs_absolute) / 60) as i32
+    } else {
+        0
     }
 }
