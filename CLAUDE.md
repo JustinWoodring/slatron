@@ -333,6 +333,36 @@ impl TtsProvider for AzureTtsAdapter {
 4. Update `models.rs` with new fields
 5. Regenerate schema: `diesel print-schema > src/schema.rs`
 
+### Modifying Default Settings or Scripts
+**IMPORTANT**: After migration `2025-12-12-162200_cleanup_and_unique_scripts`, all settings and scripts were deleted and the seeding system was implemented in `slatron-server/src/seeding.rs`.
+
+**Source of Truth**: `slatron-server/src/seeding.rs` is now the authoritative source for:
+- Default global settings (`DEFAULT_SETTINGS` constant)
+- Built-in scripts (`DEFAULT_SCRIPTS` constant)
+- Default admin user
+
+**To add/remove/modify defaults:**
+1. Edit `slatron-server/src/seeding.rs` directly
+2. Modify the `DEFAULT_SETTINGS` or `DEFAULT_SCRIPTS` arrays
+3. Restart the server (seeding runs automatically on startup)
+4. DO NOT create new migrations to add/remove seed data
+
+**How seeding works:**
+- Runs on every server startup via `seed_defaults()` in `main.rs`
+- Settings: Inserts if key doesn't exist (preserves user modifications)
+- Scripts: Updates built-in scripts if they exist, inserts if they don't
+- Users: Creates admin user only if it doesn't exist
+
+**Example: Removing unused settings**
+```rust
+// Bad: Creating a migration to delete settings
+// Good: Just remove from DEFAULT_SETTINGS array in seeding.rs
+const DEFAULT_SETTINGS: &[(&str, &str, &str)] = &[
+    ("station_name", "Slatron TV", "The name of the station."),
+    // Removed: default_transition_type, content_error_behavior, etc.
+];
+```
+
 ## Common Issues
 
 ### Build Issues

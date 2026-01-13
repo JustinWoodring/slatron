@@ -10,27 +10,6 @@ use diesel::sqlite::SqliteConnection;
 
 // Define default settings
 const DEFAULT_SETTINGS: &[(&str, &str, &str)] = &[
-    (
-        "content_error_behavior",
-        "skip",
-        "skip | retry | error_screen | previous",
-    ),
-    (
-        "content_error_retry_attempts",
-        "3",
-        "Retry attempts on content error",
-    ),
-    (
-        "content_error_retry_delay_secs",
-        "5",
-        "Delay between retries",
-    ),
-    (
-        "node_heartbeat_timeout_secs",
-        "15",
-        "Mark node offline after N seconds",
-    ),
-    ("default_transition_type", "cut", "cut | fade"),
     ("station_name", "Slatron TV", "The name of the station."),
     (
         "station_bug_image",
