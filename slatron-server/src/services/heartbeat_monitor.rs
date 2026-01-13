@@ -185,13 +185,13 @@ async fn process_dj_logic(
                     };
 
                     let remaining = duration_seconds - playback_pos;
-                    
-                    tracing::info!(
+
+                    tracing::debug!(
                         "DEBUG: Node {} Playing {}. Pos: {:.1}/{:.1}. Rem: {:.1}. Dedupe Last: {:?}",
-                        node_id, 
-                        content_id_val, 
-                        playback_pos, 
-                        duration_seconds, 
+                        node_id,
+                        content_id_val,
+                        playback_pos,
+                        duration_seconds,
                         remaining,
                         last_triggered_content.lock().unwrap().get(&node_id)
                     );
@@ -211,7 +211,7 @@ async fn process_dj_logic(
             }
         } else {
             // Case B: Cold Start / Idle
-            tracing::info!(
+            tracing::debug!(
                 "DEBUG: Node {} is Idle/Cold. Dedupe Last: {:?}",
                 node_id,
                 last_triggered_content.lock().unwrap().get(&node_id)
@@ -229,7 +229,7 @@ async fn process_dj_logic(
             map.insert(node_id, (current_content_id_val, Instant::now()));
         }
 
-        tracing::info!(
+        tracing::debug!(
             "DEBUG: Node {} triggering DJ logic (ColdStart={})",
             node_id,
             node.current_content_id.is_none()
@@ -586,11 +586,11 @@ async fn process_dj_logic(
                             intro_prompt
                         };
 
-                        tracing::info!("Prompt: {}", full_prompt);
+                        tracing::debug!("Prompt: {}", full_prompt);
 
                         let response = match state_clone
-                            .ai_service
-                            .generate_dj_dialogue(
+                            .dj_dialogue_service
+                            .generate_dialogue(
                                 &state_clone,
                                 &dj_clone,
                                 &full_prompt,
@@ -619,7 +619,7 @@ async fn process_dj_logic(
                         // 3. Prepare TTS (if speaking)
                         let mut tts_url: Option<String> = None;
                         if dj_clone.talkativeness >= 0.99 || rand::random::<f32>() <= dj_clone.talkativeness {
-                             tracing::info!("DJ Generated Dialogue: {}", response.text);
+                             tracing::debug!("DJ Generated Dialogue: {}", response.text);
                              let output_dir = std::path::PathBuf::from("static/tts");
                              let (voice_name, speech_modifier) = if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&dj_clone.voice_config_json) {
                                  (

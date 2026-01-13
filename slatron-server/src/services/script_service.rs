@@ -65,7 +65,7 @@ impl ScriptService {
 
         // 4. Log Helper
         engine.register_fn("log_info", |msg: &str| {
-            tracing::info!("[SCRIPT] {}", msg);
+            tracing::debug!("[SCRIPT] {}", msg);
         });
 
         // 5. XML Helper (Custom Parser for List Handling)

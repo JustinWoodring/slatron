@@ -211,6 +211,12 @@ async fn main() -> Result<()> {
     let log_layer_sender = log_sender.clone();
 
     // Initialize tracing with custom layer
+    // Default: INFO level shows important events, errors from ytdl/downloads
+    // Override with RUST_LOG env var for granular control:
+    //   RUST_LOG=slatron_node=debug                    (all debug logs)
+    //   RUST_LOG=slatron_node::mpv_client=debug        (MPV IPC commands)
+    //   RUST_LOG=slatron_node::mpv_main=debug          (MPV process output)
+    //   RUST_LOG=slatron_node::rhai=debug              (script execution)
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -301,7 +307,7 @@ async fn main() -> Result<()> {
                 let reader = std::io::BufReader::new(stdout);
                 for line in reader.lines() {
                     if let Ok(l) = line {
-                        tracing::info!(target: "slatron_node::mpv_main", "{}", l);
+                        tracing::debug!(target: "slatron_node::mpv_main", "{}", l);
                     }
                 }
             });
@@ -327,7 +333,7 @@ async fn main() -> Result<()> {
                 let reader = std::io::BufReader::new(stdout);
                 for line in reader.lines() {
                     if let Ok(l) = line {
-                        tracing::info!(target: "slatron_node::mpv_voice", "{}", l);
+                        tracing::debug!(target: "slatron_node::mpv_voice", "{}", l);
                     }
                 }
             });

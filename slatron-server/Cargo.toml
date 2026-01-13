@@ -49,6 +49,7 @@ ort = { version = "2.0.0-rc.4", features = ["download-binaries", "ndarray"], opt
 ndarray = { version = "0.16", optional = true }
 hound = { version = "3.5", optional = true }
 quick-xml = { version = "0.36.1", features = ["serialize"] }
+async-trait = "0.1"
 
 [build-dependencies]
 zip = "0.6"

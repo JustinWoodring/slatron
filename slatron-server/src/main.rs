@@ -22,7 +22,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use crate::config::Config;
 use crate::db::DbPool;
 use crate::services::{
-    ai_service::AiService, script_service::ScriptService, tts_service::TtsService,
+    ai::AiService, dj_dialogue_service::DjDialogueService, script_service::ScriptService,
+    tts::TtsService,
 };
 use crate::websocket::ServerMessage;
 
@@ -35,6 +36,7 @@ pub struct AppState {
     pub ai_service: Arc<AiService>,
     pub tts_service: Arc<TtsService>,
     pub script_service: Arc<ScriptService>,
+    pub dj_dialogue_service: Arc<DjDialogueService>,
     pub connected_nodes: Arc<RwLock<HashMap<i32, UnboundedSender<ServerMessage>>>>,
     // Track recent plays globally (Content IDs)
     pub recent_plays: Arc<RwLock<VecDeque<i32>>>,
@@ -122,10 +124,15 @@ async fn main() -> Result<()> {
     }
 
     // Initialize tracing
+    // Default: INFO level for app, WARN for HTTP framework
+    // Override with RUST_LOG env var for granular control:
+    //   RUST_LOG=slatron_server=debug                           (all debug logs)
+    //   RUST_LOG=slatron_server::services::heartbeat_monitor=debug  (DJ logic)
+    //   RUST_LOG=slatron_server::rhai_engine=debug              (script execution)
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "slatron_server=info,tower_http=debug".into()),
+                .unwrap_or_else(|_| "slatron_server=info,tower_http=warn".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -202,13 +209,21 @@ async fn main() -> Result<()> {
     tracing::info!("Database initialized and seeded");
 
     // Create app state
+    let ai_service = Arc::new(AiService::new());
+    let script_service = Arc::new(ScriptService::new());
+    let dj_dialogue_service = Arc::new(DjDialogueService::new(
+        ai_service.clone(),
+        script_service.clone(),
+    ));
+
     let state = AppState {
         db: db_pool,
         config: Arc::new(config.clone()),
         node_logs: Arc::new(RwLock::new(HashMap::new())),
-        ai_service: Arc::new(AiService::new()),
+        ai_service,
         tts_service: Arc::new(TtsService::new()),
-        script_service: Arc::new(ScriptService::new()),
+        script_service,
+        dj_dialogue_service,
         connected_nodes: Arc::new(RwLock::new(HashMap::new())),
         recent_plays: Arc::new(RwLock::new(VecDeque::new())),
     };

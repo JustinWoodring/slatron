@@ -31,7 +31,7 @@ pub fn create_engine(script_type: &str, mpv: Option<std::sync::Arc<crate::mpv_cl
     }
 
     engine.on_print(|x| {
-        tracing::info!("[SCRIPT] {}", x);
+        tracing::debug!("[SCRIPT] {}", x);
     });
 
     engine

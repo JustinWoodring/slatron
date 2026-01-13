@@ -224,7 +224,7 @@ impl MpvClient {
         let cmd_str = format!("{}\n", serde_json::to_string(&cmd)?);
 
         // Log the command we are sending
-        tracing::info!(target: "slatron_node::mpv_client", "Sending command: {}", cmd_str.trim());
+        tracing::debug!(target: "slatron_node::mpv_client", "Sending command: {}", cmd_str.trim());
 
         stream.write_all(cmd_str.as_bytes())?;
 
