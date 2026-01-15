@@ -102,7 +102,7 @@ export default function LoginPage() {
 
           <div className="mt-8 text-center">
             <p className="text-xs text-[var(--text-secondary)]">
-              System v1.0 • Protected Access
+              System v1.2.0 • Protected Access
             </p>
           </div>
         </div>

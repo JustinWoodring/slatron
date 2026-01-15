@@ -4,7 +4,9 @@ use diesel::prelude::*;
 use rhai::{Dynamic, Engine, Scope};
 use std::sync::Arc;
 
-use crate::models::{ContentItem, DjProfile, Schedule, ScheduleBlock};
+use crate::db::DbPool;
+use crate::models::{AiProvider, ContentItem, DjProfile, Schedule, ScheduleBlock};
+use crate::services::ai::AiService;
 use crate::AppState;
 
 #[derive(Debug, Clone)]
@@ -19,7 +21,7 @@ pub struct ScriptService {
 }
 
 impl ScriptService {
-    pub fn new() -> Self {
+    pub fn new(db: DbPool, ai_service: Arc<AiService>) -> Self {
         let mut engine = Engine::new();
 
         // Register global helpers available to all server scripts
@@ -63,12 +65,50 @@ impl ScriptService {
             }
         });
 
-        // 4. Log Helper
+        // 5. LLM Helper
+        let db_clone = db.clone();
+        let ai_clone = ai_service.clone();
+        engine.register_fn("prompt_llm", move |prompt: &str| -> String {
+            use crate::schema::ai_providers::dsl::*;
+
+            let prompt_text = prompt.to_string();
+            let db = db_clone.clone();
+            let ai = ai_clone.clone();
+
+            // Run async code in blocking context
+            tokio::task::block_in_place(move || {
+                tokio::runtime::Handle::current().block_on(async move {
+                    // 1. Fetch active LLM provider
+                    let mut conn = match db.get() {
+                        Ok(c) => c,
+                        Err(e) => return format!("Error getting DB connection: {}", e),
+                    };
+
+                    let provider_result = ai_providers
+                        .filter(is_active.eq(true))
+                        .filter(provider_category.eq("llm"))
+                        .first::<AiProvider>(&mut conn);
+
+                    match provider_result {
+                        Ok(provider) => {
+                            // 2. Call AI Service
+                            match ai.generate_completion(&prompt_text, &provider).await {
+                                Ok(response) => response,
+                                Err(e) => format!("Error generating completion: {}", e),
+                            }
+                        }
+                        Err(_) => "Error: No active LLM provider found.".to_string(),
+                    }
+                })
+            })
+        });
+
+        // 6. Log Helper
         engine.register_fn("log_info", |msg: &str| {
             tracing::debug!("[SCRIPT] {}", msg);
         });
 
-        // 5. XML Helper (Custom Parser for List Handling)
+        // 7. XML Helper (Custom Parser for List Handling)
         engine.register_fn("parse_xml", |xml: &str| -> Dynamic {
             let v = ScriptService::parse_xml_to_value(xml);
             rhai::serde::to_dynamic(&v).unwrap_or(Dynamic::UNIT)

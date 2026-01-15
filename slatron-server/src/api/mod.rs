@@ -1,4 +1,5 @@
 pub mod auth_api;
+pub mod bumper_api;
 pub mod content_api;
 pub mod dj_api;
 pub mod nodes_api;
@@ -67,6 +68,30 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/scripts/:id", delete(scripts_api::delete_script))
         .route("/scripts/:id/validate", post(scripts_api::validate_script))
         .route("/scripts/:id/execute", post(scripts_api::execute_script))
+        // Bumpers
+        .route("/bumpers", get(bumper_api::list_bumpers))
+        .route("/bumpers", post(bumper_api::create_bumper))
+        .route("/bumpers/:id", get(bumper_api::get_bumper))
+        .route("/bumpers/:id", put(bumper_api::update_bumper))
+        .route("/bumpers/:id", delete(bumper_api::delete_bumper))
+        .route("/bumpers/:id/render", post(bumper_api::render_bumper))
+        .route("/bumpers/render-all", post(bumper_api::render_all_bumpers))
+        // Bumper Backs
+        .route("/bumper-backs", get(bumper_api::list_bumper_backs))
+        .route("/bumper-backs", post(bumper_api::create_bumper_back))
+        .route("/bumper-backs/:id", get(bumper_api::get_bumper_back))
+        .route("/bumper-backs/:id", put(bumper_api::update_bumper_back))
+        .route("/bumper-backs/:id", delete(bumper_api::delete_bumper_back))
+        .route(
+            "/bumper-backs/:id/render",
+            post(bumper_api::render_bumper_back),
+        )
+        .route(
+            "/bumper-backs/render-all",
+            post(bumper_api::render_all_bumper_backs),
+        )
+        .route("/bumper-backs/fetch", post(bumper_api::fetch_bumper_back))
+        .route("/bumper-backs/upload", post(bumper_api::upload_bumper_back))
         // Users
         .route("/users", get(users_api::list_users))
         .route("/users", post(users_api::create_user))

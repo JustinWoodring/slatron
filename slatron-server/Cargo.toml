@@ -1,6 +1,6 @@
 [package]
 name = "slatron-server"
-version = "0.1.0"
+version = "1.2.0"
 edition = "2021"
 authors = ["SLATRON AUTHORS"]
 license = "AGPL-3.0-only"
@@ -11,7 +11,7 @@ embed-ui = []
 ml-support = ["dep:ort", "dep:ndarray", "dep:hound"]
 
 [dependencies]
-axum = { version = "0.7", features = ["ws"] }
+axum = { version = "0.7", features = ["ws", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 diesel = { version = "2.1", features = ["sqlite", "r2d2", "chrono", "returning_clauses_for_sqlite_3_35"] }
 diesel_migrations = "2.1"

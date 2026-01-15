@@ -435,3 +435,82 @@ pub struct NewGlobalSetting {
     pub value: String,
     pub description: Option<String>,
 }
+
+// Bumper Back models
+#[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
+#[diesel(table_name = crate::schema::bumper_backs)]
+pub struct BumperBack {
+    pub id: Option<i32>,
+    pub name: String,
+    pub description: Option<String>,
+    pub file_path: String,
+    pub duration_ms: Option<i32>,
+    pub is_builtin: bool,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Insertable, Deserialize)]
+#[diesel(table_name = crate::schema::bumper_backs)]
+pub struct NewBumperBack {
+    pub name: String,
+    pub description: Option<String>,
+    pub file_path: String,
+    pub duration_ms: Option<i32>,
+    pub is_builtin: bool,
+}
+
+#[derive(Debug, AsChangeset, Deserialize)]
+#[diesel(table_name = crate::schema::bumper_backs)]
+pub struct UpdateBumperBack {
+    pub name: Option<String>,
+    pub description: Option<Option<String>>,
+    pub file_path: Option<String>,
+    pub duration_ms: Option<Option<i32>>,
+}
+
+// Bumper models
+#[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
+#[diesel(table_name = crate::schema::bumpers)]
+pub struct Bumper {
+    pub id: Option<i32>,
+    pub name: String,
+    pub bumper_type: String,
+    pub description: Option<String>,
+    pub is_template: bool,
+    pub template_content: Option<String>,
+    pub rendered_path: Option<String>,
+    pub duration_ms: Option<i32>,
+    pub is_builtin: bool,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    pub last_rendered_at: Option<NaiveDateTime>,
+    pub bumper_back_id: Option<i32>,
+}
+
+#[derive(Debug, Insertable, Deserialize)]
+#[diesel(table_name = crate::schema::bumpers)]
+pub struct NewBumper {
+    pub name: String,
+    pub bumper_type: String,
+    pub description: Option<String>,
+    pub is_template: bool,
+    pub template_content: Option<String>,
+    pub rendered_path: Option<String>,
+    pub duration_ms: Option<i32>,
+    pub is_builtin: bool,
+    pub bumper_back_id: Option<i32>,
+}
+
+#[derive(Debug, AsChangeset, Deserialize)]
+#[diesel(table_name = crate::schema::bumpers)]
+pub struct UpdateBumper {
+    pub name: Option<String>,
+    pub bumper_type: Option<String>,
+    pub description: Option<Option<String>>,
+    pub is_template: Option<bool>,
+    pub template_content: Option<Option<String>>,
+    pub rendered_path: Option<Option<String>>,
+    pub duration_ms: Option<Option<i32>>,
+    pub bumper_back_id: Option<Option<i32>>,
+}

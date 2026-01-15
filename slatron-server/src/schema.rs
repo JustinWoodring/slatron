@@ -16,6 +16,37 @@ diesel::table! {
 }
 
 diesel::table! {
+    bumper_backs (id) {
+        id -> Nullable<Integer>,
+        name -> Text,
+        description -> Nullable<Text>,
+        file_path -> Text,
+        duration_ms -> Nullable<Integer>,
+        is_builtin -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    bumpers (id) {
+        id -> Nullable<Integer>,
+        name -> Text,
+        bumper_type -> Text,
+        description -> Nullable<Text>,
+        is_template -> Bool,
+        template_content -> Nullable<Text>,
+        rendered_path -> Nullable<Text>,
+        duration_ms -> Nullable<Integer>,
+        is_builtin -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        last_rendered_at -> Nullable<Timestamp>,
+        bumper_back_id -> Nullable<Integer>,
+    }
+}
+
+diesel::table! {
     content_items (id) {
         id -> Nullable<Integer>,
         title -> Text,
@@ -165,6 +196,7 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(bumpers -> bumper_backs (bumper_back_id));
 diesel::joinable!(content_items -> scripts (adapter_id));
 diesel::joinable!(dj_memories -> dj_profiles (dj_id));
 diesel::joinable!(node_schedules -> nodes (node_id));
@@ -179,6 +211,8 @@ diesel::joinable!(schedules -> dj_profiles (dj_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     ai_providers,
+    bumper_backs,
+    bumpers,
     content_items,
     dj_memories,
     dj_profiles,

@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<mlt LC_NUMERIC="C" version="7.0.0" root="">
+  <profile description="HD 1080p 30 fps" width="1920" height="1080"
+          progressive="1" sample_aspect_num="1" sample_aspect_den="1"
+          display_aspect_num="16" display_aspect_den="9"
+          frame_rate_num="30" frame_rate_den="1" colorspace="709"/>
+
+  <!-- Bumper Back Background (if provided) -->
+  <producer id="back" mlt_service="avformat">
+    <property name="resource">{{BUMPER_BACK_PATH}}</property>
+  </producer>
+
+  <!-- Text with theme color outline -->
+  <producer id="text" mlt_service="pango">
+    <property name="family">Montserrat</property>
+    <property name="size">150</property>
+    <property name="weight">800</property>
+    <property name="fgcolour">#ffffff</property>
+    <property name="bgcolour">#00000000</property>
+    <property name="outline">3</property>
+    <property name="olcolour">{{THEME_COLOR}}</property>
+    <property name="align">center</property>
+    <property name="markup">{{STATION_NAME}}</property>
+  </producer>
+
+  <playlist id="playlist_back">
+    <entry producer="back" in="0" out="149"/>
+  </playlist>
+
+  <playlist id="playlist_text">
+    <entry producer="text" in="0" out="149"/>
+  </playlist>
+
+  <tractor id="tractor0" in="0" out="149">
+    <track producer="playlist_back"/>
+    <track producer="playlist_text"/>
+
+    <!-- Composite Transition: Static text on top of bumper back -->
+    <transition mlt_service="composite" in="0" out="149">
+      <property name="a_track">0</property>
+      <property name="b_track">1</property>
+      <property name="halign">center</property>
+      <property name="valign">middle</property>
+      <property name="geometry">0/0:100%x100%:100</property>
+      <property name="distort">0</property>
+    </transition>
+  </tractor>
+</mlt>

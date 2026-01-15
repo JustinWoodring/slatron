@@ -10,7 +10,7 @@ mod websocket_client;
 use anyhow::Result;
 use chrono::{Datelike, NaiveDate, NaiveTime};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,6 +45,7 @@ pub struct NodeState {
     pub active_settings: Arc<RwLock<rhai::Map>>,
     pub schedule_update_notify: Arc<tokio::sync::Notify>,
     pub schedule_dirty: Arc<AtomicBool>,
+    pub bumper_queue: Arc<RwLock<VecDeque<String>>>, // Queue of bumper names/IDs to play
 }
 
 // Log Visitor to extract message
@@ -370,6 +371,7 @@ async fn main() -> Result<()> {
         active_settings: Arc::new(RwLock::new(rhai::Map::new())),
         schedule_update_notify: Arc::new(tokio::sync::Notify::new()),
         schedule_dirty: Arc::new(AtomicBool::new(false)),
+        bumper_queue: Arc::new(RwLock::new(VecDeque::new())),
     };
 
     // Start WebSocket client
