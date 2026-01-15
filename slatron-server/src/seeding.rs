@@ -104,7 +104,7 @@ const DEFAULT_SCRIPTS: &[DefaultScript] = &[
     },
     DefaultScript {
         name: "Auto Station Bumpers",
-        script_type: "transformer",
+        script_type: "global",
         content: include_str!("defaults/scripts/auto_bumpers.rhai"),
         description: "Automatically plays station idents and transitions based on time.",
         params_schema: None,

@@ -20,7 +20,7 @@ pub async fn run(db_pool: DbPool) {
             cleanup_tts(&tts_dir);
 
             if let Ok(mut conn) = pool.get() {
-                let back_dir = PathBuf::from("static/bumper_backs");
+                let back_dir = PathBuf::from("static/media/bumper_backs");
                 cleanup_bumper_backs(&back_dir, &mut conn);
             } else {
                 tracing::error!("Cleanup task failed to get DB connection");
@@ -133,7 +133,7 @@ fn cleanup_bumper_backs(dir: &Path, conn: &mut SqliteConnection) {
 
                         if let Some(filename) = path.file_name() {
                             let filename_str = filename.to_string_lossy();
-                            let relative_path = format!("bumper_backs/{}", filename_str);
+                            let relative_path = format!("media/bumper_backs/{}", filename_str);
 
                             if !valid_paths.contains(&relative_path) {
                                 // Not in DB, delete it

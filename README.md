@@ -394,6 +394,11 @@ These functions are called automatically by the node during the playback lifecyc
 *   `mpv_remove_overlay(id)`: Remove an overlay.
 *   `get_video_width()` / `get_video_height()`: Get resolution of current content.
 
+#### Station Automation (Bumpers)
+*   `inject_bumper(name_or_id)`: Queues a bumper to be played immediately after the current item finishes.
+*   `is_top_of_hour()`: Returns `true` if the current time is within the first few minutes of the hour (useful for scheduling idents).
+*   `get_current_hour()`: Returns the current hour (0-23) in the station's timezone.
+
 ---
 
 ## 📄 License
