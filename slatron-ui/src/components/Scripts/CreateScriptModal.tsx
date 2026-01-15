@@ -53,6 +53,20 @@ let context = "Current Time: " + time;
 
 context; // The last expression is returned and appended to the DJ prompt
 `
+            } else if (formData.script_type === 'global') {
+                defaultContent = `// Global Script
+// Executed on Node during playback lifecycle events
+
+fn on_load(settings) {
+    // Called when content loads
+    print("Global on_load");
+}
+
+fn on_unload(settings) {
+    // Called when content unloads
+    print("Global on_unload");
+}
+`
             }
 
             const newScript = await createScript({
@@ -115,6 +129,7 @@ context; // The last expression is returned and appended to the DJ prompt
                             <option value="content_loader">Content Loader</option>
                             <option value="transformer">Transformer</option>
                             <option value="server_context">Server Context Source</option>
+                            <option value="global">Global Script</option>
                         </select>
                     </div>
 

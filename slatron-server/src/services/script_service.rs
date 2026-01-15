@@ -114,6 +114,21 @@ impl ScriptService {
             rhai::serde::to_dynamic(&v).unwrap_or(Dynamic::UNIT)
         });
 
+        // Register Stub functions for global scripts to allow execution/testing on server
+        // without crashing due to missing functions. These are "no-ops" on the server.
+        engine.register_fn("mpv_set_loop", |_enabled: bool| {});
+        engine.register_fn("get_content_duration", || -> f64 { 0.0 });
+        engine.register_fn("get_block_duration", || -> f64 { 0.0 });
+        engine.register_fn("get_playback_position", || -> f64 { 0.0 });
+        engine.register_fn("mpv_play", |_path: String| {});
+        engine.register_fn("mpv_send", |_cmd: serde_json::Value| {});
+        // Bumpers
+        engine.register_fn("inject_bumper", |_name: String| {});
+        engine.register_fn("is_top_of_hour", || -> bool { false });
+        engine.register_fn("get_current_hour", || -> i64 {
+            Local::now().hour() as i64
+        });
+
         Self {
             engine: Arc::new(engine),
         }
@@ -431,9 +446,33 @@ impl ScriptService {
             .unwrap_or_else(|| "UTC".to_string());
 
         let target_ids: Vec<i32> = scripts_config.iter().map(|c| c.script_id).collect();
-        let transformer_scripts = scripts
+        let mut transformer_scripts = scripts
             .filter(id.eq_any(target_ids))
             .load::<crate::models::Script>(&mut conn)?;
+
+        // Fetch Global Scripts
+        let global_scripts_json: String = gs::global_settings
+            .filter(gs::key.eq("global_active_scripts"))
+            .select(gs::value)
+            .first(&mut conn)
+            .optional()?
+            .unwrap_or_else(|| "[]".to_string());
+
+        let global_script_names: Vec<String> =
+            serde_json::from_str(&global_scripts_json).unwrap_or_default();
+
+        if !global_script_names.is_empty() {
+            let global_scripts = scripts
+                .filter(name.eq_any(global_script_names))
+                .load::<crate::models::Script>(&mut conn)?;
+
+            // Prepend global scripts to ensure they run first (matching Node behavior)
+            // Note: We need to handle them carefully.
+            // We'll create a new vector: Global + Local
+            let mut combined_scripts = global_scripts;
+            combined_scripts.extend(transformer_scripts);
+            transformer_scripts = combined_scripts;
+        }
 
         if transformer_scripts.is_empty() {
             return Ok(String::new());

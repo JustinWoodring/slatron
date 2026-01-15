@@ -15,6 +15,14 @@ impl BumperService {
         Self { db }
     }
 
+    fn escape_xml(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
+    }
+
     /// Substitute template variables in MLT XML
     fn substitute_variables(
         &self,
@@ -24,11 +32,13 @@ impl BumperService {
         bumper_back_path: Option<&str>,
     ) -> String {
         let mut result = template
-            .replace("{{STATION_NAME}}", station_name)
-            .replace("{{THEME_COLOR}}", theme_color);
+            .replace("{{STATION_NAME}}", &Self::escape_xml(station_name))
+            .replace("{{THEME_COLOR}}", &Self::escape_xml(theme_color));
 
         if let Some(path) = bumper_back_path {
-            result = result.replace("{{BUMPER_BACK_PATH}}", path);
+            // Path shouldn't strictly need XML escaping if it's a valid path,
+            // but for safety in XML attribute:
+            result = result.replace("{{BUMPER_BACK_PATH}}", &Self::escape_xml(path));
         }
 
         result
@@ -335,6 +345,41 @@ impl BumperService {
 
     /// Download a remote file using curl
     pub fn download_remote_file(&self, url: &str) -> Result<PathBuf> {
+        // Validate URL
+        let parsed_url = url::Url::parse(url)?;
+
+        if parsed_url.scheme() != "http" && parsed_url.scheme() != "https" {
+            return Err(anyhow!("Invalid URL scheme: {}", parsed_url.scheme()));
+        }
+
+        if let Some(host_str) = parsed_url.host_str() {
+            if host_str == "localhost" {
+                return Err(anyhow!("Access to localhost is denied"));
+            }
+
+            if let Ok(ip) = host_str.parse::<std::net::IpAddr>() {
+                if ip.is_loopback() || ip.is_unspecified() {
+                    return Err(anyhow!("Access to local/unspecified IP is denied"));
+                }
+                match ip {
+                    std::net::IpAddr::V4(ipv4) => {
+                        if ipv4.is_private() || ipv4.is_link_local() {
+                            return Err(anyhow!("Access to private network is denied"));
+                        }
+                    }
+                    std::net::IpAddr::V6(ipv6) => {
+                        // is_unique_local() is unstable, but fc00::/7 are ULA (private)
+                        // fe80::/10 are link-local.
+                        // For now just check loopback/unspecified which we did.
+                        // We can manually check ranges if needed, but IPv6 private range support in std is limited.
+                        if (ipv6.segments()[0] & 0xfe00) == 0xfc00 {
+                            return Err(anyhow!("Access to private network is denied"));
+                        }
+                    }
+                }
+            }
+        }
+
         // Ensure static/media/bumper_backs exists
         let output_dir = PathBuf::from("static/media/bumper_backs");
         if !output_dir.exists() {

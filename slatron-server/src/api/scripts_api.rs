@@ -48,6 +48,7 @@ pub async fn create_script(
     if new_script.script_type != "transformer"
         && new_script.script_type != "content_loader"
         && new_script.script_type != "server_context"
+        && new_script.script_type != "global"
     {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -80,6 +81,7 @@ pub async fn update_script(
     if updates.script_type != "transformer"
         && updates.script_type != "content_loader"
         && updates.script_type != "server_context"
+        && updates.script_type != "global"
     {
         return Err(StatusCode::BAD_REQUEST);
     }

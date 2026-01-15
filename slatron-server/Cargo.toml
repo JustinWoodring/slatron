@@ -50,6 +50,8 @@ ndarray = { version = "0.16", optional = true }
 hound = { version = "3.5", optional = true }
 quick-xml = { version = "0.36.1", features = ["serialize"] }
 async-trait = "0.1"
+infer = "0.15"
+url = "2.5"
 
 [build-dependencies]
 zip = "0.6"

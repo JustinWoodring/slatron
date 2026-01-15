@@ -581,11 +581,41 @@ pub async fn upload_bumper_back(
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
 
+            // Validate file type
+            let file_type = infer::get_from_path(&temp_path)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .ok_or_else(|| {
+                    let _ = std::fs::remove_file(&temp_path);
+                    StatusCode::BAD_REQUEST
+                })?;
+
+            if !file_type.mime_type().starts_with("video/") {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(StatusCode::BAD_REQUEST);
+            }
+
+            // Whitelist specific extensions
+            let extension = std::path::Path::new(&original_filename)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+
+            let allowed_extensions = ["mp4", "webm", "mov", "avi", "mkv"];
+            if !allowed_extensions.contains(&extension.as_str()) {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(StatusCode::BAD_REQUEST);
+            }
+
             temp_file_path = Some(temp_path);
         }
     }
 
     if name.is_empty() || temp_file_path.is_none() {
+        // If we have a temp file but failed for other reasons (missing name), clean it up
+        if let Some(path) = temp_file_path {
+            let _ = std::fs::remove_file(path);
+        }
         tracing::error!("Missing name or file in upload request");
         return Err(StatusCode::BAD_REQUEST);
     }
