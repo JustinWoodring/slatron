@@ -431,9 +431,33 @@ impl ScriptService {
             .unwrap_or_else(|| "UTC".to_string());
 
         let target_ids: Vec<i32> = scripts_config.iter().map(|c| c.script_id).collect();
-        let transformer_scripts = scripts
+        let mut transformer_scripts = scripts
             .filter(id.eq_any(target_ids))
             .load::<crate::models::Script>(&mut conn)?;
+
+        // Fetch Global Scripts
+        let global_scripts_json: String = gs::global_settings
+            .filter(gs::key.eq("global_active_scripts"))
+            .select(gs::value)
+            .first(&mut conn)
+            .optional()?
+            .unwrap_or_else(|| "[]".to_string());
+
+        let global_script_names: Vec<String> =
+            serde_json::from_str(&global_scripts_json).unwrap_or_default();
+
+        if !global_script_names.is_empty() {
+            let global_scripts = scripts
+                .filter(name.eq_any(global_script_names))
+                .load::<crate::models::Script>(&mut conn)?;
+
+            // Prepend global scripts to ensure they run first (matching Node behavior)
+            // Note: We need to handle them carefully.
+            // We'll create a new vector: Global + Local
+            let mut combined_scripts = global_scripts;
+            combined_scripts.extend(transformer_scripts);
+            transformer_scripts = combined_scripts;
+        }
 
         if transformer_scripts.is_empty() {
             return Ok(String::new());
