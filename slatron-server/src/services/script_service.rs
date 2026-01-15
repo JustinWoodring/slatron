@@ -114,6 +114,21 @@ impl ScriptService {
             rhai::serde::to_dynamic(&v).unwrap_or(Dynamic::UNIT)
         });
 
+        // Register Stub functions for global scripts to allow execution/testing on server
+        // without crashing due to missing functions. These are "no-ops" on the server.
+        engine.register_fn("mpv_set_loop", |_enabled: bool| {});
+        engine.register_fn("get_content_duration", || -> f64 { 0.0 });
+        engine.register_fn("get_block_duration", || -> f64 { 0.0 });
+        engine.register_fn("get_playback_position", || -> f64 { 0.0 });
+        engine.register_fn("mpv_play", |_path: String| {});
+        engine.register_fn("mpv_send", |_cmd: serde_json::Value| {});
+        // Bumpers
+        engine.register_fn("inject_bumper", |_name: String| {});
+        engine.register_fn("is_top_of_hour", || -> bool { false });
+        engine.register_fn("get_current_hour", || -> i64 {
+            Local::now().hour() as i64
+        });
+
         Self {
             engine: Arc::new(engine),
         }
