@@ -10,7 +10,7 @@ mod services;
 mod websocket;
 
 use anyhow::Result;
-use axum::{routing::get, Router};
+use axum::{extract::DefaultBodyLimit, routing::get, Router};
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -22,8 +22,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use crate::config::Config;
 use crate::db::DbPool;
 use crate::services::{
-    ai::AiService, dj_dialogue_service::DjDialogueService, script_service::ScriptService,
-    tts::TtsService,
+    ai::AiService, bumper_service::BumperService, dj_dialogue_service::DjDialogueService,
+    script_service::ScriptService, tts::TtsService,
 };
 use crate::websocket::ServerMessage;
 
@@ -35,6 +35,7 @@ pub struct AppState {
     pub node_logs: Arc<RwLock<HashMap<i32, VecDeque<crate::models::LogEntry>>>>,
     pub ai_service: Arc<AiService>,
     pub tts_service: Arc<TtsService>,
+    pub bumper_service: Arc<BumperService>,
     pub script_service: Arc<ScriptService>,
     pub dj_dialogue_service: Arc<DjDialogueService>,
     pub connected_nodes: Arc<RwLock<HashMap<i32, UnboundedSender<ServerMessage>>>>,
@@ -210,7 +211,8 @@ async fn main() -> Result<()> {
 
     // Create app state
     let ai_service = Arc::new(AiService::new());
-    let script_service = Arc::new(ScriptService::new());
+    let script_service = Arc::new(ScriptService::new(db_pool.clone(), ai_service.clone()));
+    let bumper_service = Arc::new(BumperService::new(db_pool.clone()));
     let dj_dialogue_service = Arc::new(DjDialogueService::new(
         ai_service.clone(),
         script_service.clone(),
@@ -222,6 +224,7 @@ async fn main() -> Result<()> {
         node_logs: Arc::new(RwLock::new(HashMap::new())),
         ai_service,
         tts_service: Arc::new(TtsService::new()),
+        bumper_service,
         script_service,
         dj_dialogue_service,
         connected_nodes: Arc::new(RwLock::new(HashMap::new())),
@@ -231,8 +234,8 @@ async fn main() -> Result<()> {
     // Spawn heartbeat monitor
     tokio::spawn(services::heartbeat_monitor::run(state.clone()));
 
-    // Spawn TTS cleanup task
-    tokio::spawn(services::tts_cleanup::run());
+    // Spawn Cleanup task (TTS & Bumper Backs)
+    tokio::spawn(services::cleaning_service::run(state.db.clone()));
 
     // Get address before moving state
     let addr = format!("{}:{}", state.config.server.host, state.config.server.port);
@@ -278,6 +281,7 @@ async fn main() -> Result<()> {
             ServeDir::new(&static_path)
                 .not_found_service(ServeFile::new(format!("{}/index.html", static_path))),
         )
+        .layer(DefaultBodyLimit::max(250 * 1024 * 1024)) // 250MB limit
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state);

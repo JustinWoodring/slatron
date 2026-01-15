@@ -4,7 +4,9 @@ use diesel::prelude::*;
 use rhai::{Dynamic, Engine, Scope};
 use std::sync::Arc;
 
-use crate::models::{ContentItem, DjProfile, Schedule, ScheduleBlock};
+use crate::db::DbPool;
+use crate::models::{AiProvider, ContentItem, DjProfile, Schedule, ScheduleBlock};
+use crate::services::ai::AiService;
 use crate::AppState;
 
 #[derive(Debug, Clone)]
@@ -19,7 +21,7 @@ pub struct ScriptService {
 }
 
 impl ScriptService {
-    pub fn new() -> Self {
+    pub fn new(db: DbPool, ai_service: Arc<AiService>) -> Self {
         let mut engine = Engine::new();
 
         // Register global helpers available to all server scripts
@@ -63,15 +65,68 @@ impl ScriptService {
             }
         });
 
-        // 4. Log Helper
+        // 5. LLM Helper
+        let db_clone = db.clone();
+        let ai_clone = ai_service.clone();
+        engine.register_fn("prompt_llm", move |prompt: &str| -> String {
+            use crate::schema::ai_providers::dsl::*;
+
+            let prompt_text = prompt.to_string();
+            let db = db_clone.clone();
+            let ai = ai_clone.clone();
+
+            // Run async code in blocking context
+            tokio::task::block_in_place(move || {
+                tokio::runtime::Handle::current().block_on(async move {
+                    // 1. Fetch active LLM provider
+                    let mut conn = match db.get() {
+                        Ok(c) => c,
+                        Err(e) => return format!("Error getting DB connection: {}", e),
+                    };
+
+                    let provider_result = ai_providers
+                        .filter(is_active.eq(true))
+                        .filter(provider_category.eq("llm"))
+                        .first::<AiProvider>(&mut conn);
+
+                    match provider_result {
+                        Ok(provider) => {
+                            // 2. Call AI Service
+                            match ai.generate_completion(&prompt_text, &provider).await {
+                                Ok(response) => response,
+                                Err(e) => format!("Error generating completion: {}", e),
+                            }
+                        }
+                        Err(_) => "Error: No active LLM provider found.".to_string(),
+                    }
+                })
+            })
+        });
+
+        // 6. Log Helper
         engine.register_fn("log_info", |msg: &str| {
             tracing::debug!("[SCRIPT] {}", msg);
         });
 
-        // 5. XML Helper (Custom Parser for List Handling)
+        // 7. XML Helper (Custom Parser for List Handling)
         engine.register_fn("parse_xml", |xml: &str| -> Dynamic {
             let v = ScriptService::parse_xml_to_value(xml);
             rhai::serde::to_dynamic(&v).unwrap_or(Dynamic::UNIT)
+        });
+
+        // Register Stub functions for global scripts to allow execution/testing on server
+        // without crashing due to missing functions. These are "no-ops" on the server.
+        engine.register_fn("mpv_set_loop", |_enabled: bool| {});
+        engine.register_fn("get_content_duration", || -> f64 { 0.0 });
+        engine.register_fn("get_block_duration", || -> f64 { 0.0 });
+        engine.register_fn("get_playback_position", || -> f64 { 0.0 });
+        engine.register_fn("mpv_play", |_path: String| {});
+        engine.register_fn("mpv_send", |_cmd: serde_json::Value| {});
+        // Bumpers
+        engine.register_fn("inject_bumper", |_name: String| {});
+        engine.register_fn("is_top_of_hour", || -> bool { false });
+        engine.register_fn("get_current_hour", || -> i64 {
+            Local::now().hour() as i64
         });
 
         Self {
@@ -391,9 +446,33 @@ impl ScriptService {
             .unwrap_or_else(|| "UTC".to_string());
 
         let target_ids: Vec<i32> = scripts_config.iter().map(|c| c.script_id).collect();
-        let transformer_scripts = scripts
+        let mut transformer_scripts = scripts
             .filter(id.eq_any(target_ids))
             .load::<crate::models::Script>(&mut conn)?;
+
+        // Fetch Global Scripts
+        let global_scripts_json: String = gs::global_settings
+            .filter(gs::key.eq("global_active_scripts"))
+            .select(gs::value)
+            .first(&mut conn)
+            .optional()?
+            .unwrap_or_else(|| "[]".to_string());
+
+        let global_script_names: Vec<String> =
+            serde_json::from_str(&global_scripts_json).unwrap_or_default();
+
+        if !global_script_names.is_empty() {
+            let global_scripts = scripts
+                .filter(name.eq_any(global_script_names))
+                .load::<crate::models::Script>(&mut conn)?;
+
+            // Prepend global scripts to ensure they run first (matching Node behavior)
+            // Note: We need to handle them carefully.
+            // We'll create a new vector: Global + Local
+            let mut combined_scripts = global_scripts;
+            combined_scripts.extend(transformer_scripts);
+            transformer_scripts = combined_scripts;
+        }
 
         if transformer_scripts.is_empty() {
             return Ok(String::new());

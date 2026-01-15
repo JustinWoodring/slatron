@@ -587,9 +587,9 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
                                                 }}
                                             >
                                                 <option value="">Add a transformer...</option>
-                                                {scripts.filter(s => s.script_type === 'transformer').map(s => (
+                                                {scripts.filter(s => s.script_type === 'transformer' || s.script_type === 'global').map(s => (
                                                     <option key={s.id} value={s.id} disabled={formData.transformer_scripts.some(t => t.id === s.id)}>
-                                                        {s.name}
+                                                        {s.name} {s.script_type === 'global' ? '(Global)' : ''}
                                                     </option>
                                                 ))}
                                             </select>

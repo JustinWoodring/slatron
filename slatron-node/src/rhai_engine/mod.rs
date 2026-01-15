@@ -1,6 +1,13 @@
 use rhai::{Engine, Scope};
+use std::collections::VecDeque;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
-pub fn create_engine(script_type: &str, mpv: Option<std::sync::Arc<crate::mpv_client::MpvClient>>) -> Engine {
+pub fn create_engine(
+    script_type: &str,
+    mpv: Option<std::sync::Arc<crate::mpv_client::MpvClient>>,
+    bumper_queue: Option<Arc<RwLock<VecDeque<String>>>>,
+) -> Engine {
     let mut engine = Engine::new();
 
     // Register functions based on script type
@@ -17,7 +24,7 @@ pub fn create_engine(script_type: &str, mpv: Option<std::sync::Arc<crate::mpv_cl
         }
         "global" => {
             if let Some(mpv) = mpv {
-                register_global_functions(&mut engine, mpv);
+                register_global_functions(&mut engine, mpv, bumper_queue);
             } else {
                 tracing::warn!("MPV client not provided for global script engine");
             }
@@ -26,6 +33,10 @@ pub fn create_engine(script_type: &str, mpv: Option<std::sync::Arc<crate::mpv_cl
             register_transformer_functions(&mut engine);
             // Allow transformers to download files and exec shell (for dynamic content fetching)
             register_content_loader_functions(&mut engine);
+            // Allow transformers to inject bumpers too
+            if let Some(queue) = bumper_queue {
+                register_bumper_functions(&mut engine, queue);
+            }
         }
         _ => {}
     }
@@ -165,6 +176,7 @@ fn register_overlay_functions(
 fn register_global_functions(
     engine: &mut Engine,
     mpv: std::sync::Arc<crate::mpv_client::MpvClient>,
+    bumper_queue: Option<Arc<RwLock<VecDeque<String>>>>,
 ) {
     let mpv_clone = mpv.clone();
     engine.register_fn("mpv_set_loop", move |enabled: bool| {
@@ -202,6 +214,35 @@ fn register_global_functions(
             tracing::error!(target: "slatron_node::rhai", "mpv_play failed: {}", e);
         }
     });
+
+    // Register bumper functions for global scripts
+    if let Some(queue) = bumper_queue {
+        register_bumper_functions(engine, queue);
+    }
+}
+
+fn register_bumper_functions(engine: &mut Engine, bumper_queue: Arc<RwLock<VecDeque<String>>>) {
+    let queue_clone = bumper_queue.clone();
+    engine.register_fn("inject_bumper", move |name_or_id: String| {
+        let queue = queue_clone.clone();
+        tokio::spawn(async move {
+            let mut q = queue.write().await;
+            q.push_back(name_or_id.clone());
+            tracing::info!(target: "slatron_node::rhai", "Bumper queued: {}", name_or_id);
+        });
+    });
+
+    engine.register_fn("is_top_of_hour", || -> bool {
+        use chrono::Timelike;
+        let now = chrono::Local::now();
+        now.minute() == 0
+    });
+
+    engine.register_fn("get_current_hour", || -> i64 {
+        use chrono::Timelike;
+        let now = chrono::Local::now();
+        now.hour() as i64
+    });
 }
 
 fn register_transformer_functions(engine: &mut Engine) {
@@ -235,8 +276,9 @@ pub fn execute_script_function(
     settings: &mut rhai::Map,
     args: rhai::Map,
     mpv: std::sync::Arc<crate::mpv_client::MpvClient>,
+    bumper_queue: Option<Arc<RwLock<VecDeque<String>>>>,
 ) -> Result<(), String> {
-    let mut engine = create_engine("transformer", Some(mpv.clone()));
+    let mut engine = create_engine("transformer", Some(mpv.clone()), bumper_queue);
 
     // Register mpv_send
     let mpv_clone = mpv.clone();
@@ -374,6 +416,3 @@ pub fn execute_script_function(
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

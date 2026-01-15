@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<mlt LC_NUMERIC="C" version="7.0.0" root="">
+  <profile description="HD 1080p 30 fps" width="1920" height="1080"
+          progressive="1" sample_aspect_num="1" sample_aspect_den="1"
+          display_aspect_num="16" display_aspect_den="9"
+          frame_rate_num="30" frame_rate_den="1" colorspace="709"/>
+
+  <!-- Solid dark gray background (fallback for dark gradient) -->
+  <producer id="bg" mlt_service="color">
+    <property name="resource">#111111</property>
+  </producer>
+
+  <playlist id="playlist0">
+    <entry producer="bg" in="0" out="149"/>
+  </playlist>
+
+  <tractor id="tractor0" in="0" out="149">
+    <track producer="playlist0"/>
+  </tractor>
+</mlt>
