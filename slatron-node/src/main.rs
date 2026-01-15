@@ -586,6 +586,11 @@ async fn playback_loop(state: NodeState) {
     let loop_interval = Duration::from_secs(1);
 
     loop {
+        // Check for bumpers
+        if let Err(e) = crate::playback::play_queued_bumpers(&state).await {
+            tracing::error!("Error playing queued bumpers: {}", e);
+        }
+
         tokio::time::sleep(loop_interval).await;
 
         let now = chrono::Utc::now();

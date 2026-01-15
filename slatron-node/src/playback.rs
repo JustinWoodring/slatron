@@ -240,7 +240,9 @@ pub async fn play_queued_bumpers(state: &NodeState) -> Result<()> {
 
         // Fetch bumper info from server
         let server_url = &state.config.server_url;
-        let base_url = server_url.replace("ws://", "http://").replace("wss://", "https://");
+        let base_url = server_url
+            .replace("ws://", "http://")
+            .replace("wss://", "https://");
         let api_url = base_url.split("/ws").next().unwrap_or(&base_url);
 
         // Try to fetch bumper by name first, then by ID
@@ -275,19 +277,23 @@ pub async fn play_queued_bumpers(state: &NodeState) -> Result<()> {
                         };
 
                         if let Some(bumper) = bumper {
-                            if let Some(rendered_path) = bumper.get("rendered_path").and_then(|p| p.as_str()) {
+                            if let Some(rendered_path) =
+                                bumper.get("rendered_path").and_then(|p| p.as_str())
+                            {
                                 let bumper_url = format!("{}/{}", api_url, rendered_path);
 
                                 // Download bumper to cache
                                 let cache_dir = std::path::PathBuf::from(
-                                    std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
-                                ).join(".slatron/bumper_cache");
+                                    std::env::var("HOME").unwrap_or_else(|_| ".".to_string()),
+                                )
+                                .join(".slatron/bumper_cache");
 
                                 if !cache_dir.exists() {
                                     std::fs::create_dir_all(&cache_dir)?;
                                 }
 
-                                let file_name = rendered_path.split('/').last().unwrap_or("bumper.mp4");
+                                let file_name =
+                                    rendered_path.split('/').last().unwrap_or("bumper.mp4");
                                 let local_path = cache_dir.join(file_name);
 
                                 // Only download if not already cached
@@ -299,7 +305,10 @@ pub async fn play_queued_bumpers(state: &NodeState) -> Result<()> {
                                             std::fs::write(&local_path, bytes)?;
                                         }
                                         Ok(resp) => {
-                                            tracing::error!("Failed to download bumper: HTTP {}", resp.status());
+                                            tracing::error!(
+                                                "Failed to download bumper: HTTP {}",
+                                                resp.status()
+                                            );
                                             queue = state.bumper_queue.write().await;
                                             continue;
                                         }
@@ -313,20 +322,60 @@ pub async fn play_queued_bumpers(state: &NodeState) -> Result<()> {
 
                                 // Play bumper via main MPV
                                 tracing::info!("Playing bumper from: {}", local_path.display());
-                                if let Err(e) = state.mpv.play(&local_path.to_string_lossy(), None, Some(false)) {
+
+                                // Capture current state for resume
+                                let mut resume_path = None;
+                                let mut resume_pos = None;
+
+                                if let Ok(false) = state.mpv.is_idle() {
+                                    if let Ok(path) = state.mpv.get_path() {
+                                        resume_path = Some(path);
+                                        if let Ok(pos) = state.mpv.get_position() {
+                                            resume_pos = Some(pos);
+                                        }
+                                    }
+                                }
+
+                                if let Err(e) =
+                                    state
+                                        .mpv
+                                        .play(&local_path.to_string_lossy(), None, Some(false))
+                                {
                                     tracing::error!("Failed to play bumper: {}", e);
                                 } else {
                                     // Wait for bumper to finish
-                                    if let Some(duration) = bumper.get("duration_ms").and_then(|d| d.as_i64()) {
-                                        let sleep_duration = std::time::Duration::from_millis(duration as u64);
+                                    if let Some(duration) =
+                                        bumper.get("duration_ms").and_then(|d| d.as_i64())
+                                    {
+                                        let sleep_duration =
+                                            std::time::Duration::from_millis(duration as u64);
                                         tokio::time::sleep(sleep_duration).await;
                                     } else {
                                         // Default wait time if duration not available
                                         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                                     }
+
+                                    // Resume previous content if applicable
+                                    if let Some(path) = resume_path {
+                                        tracing::info!(
+                                            "Resuming content: {} at {:.2}s",
+                                            path,
+                                            resume_pos.unwrap_or(0.0)
+                                        );
+                                        if let Err(e) =
+                                            state.mpv.play(&path, resume_pos, Some(false))
+                                        {
+                                            // Assuming loop disabled for resume or should check loop status too?
+                                            // For now, simple resume
+                                            tracing::error!("Failed to resume content: {}", e);
+                                        }
+                                    }
                                 }
                             } else {
-                                tracing::warn!("Bumper '{}' has no rendered path", bumper_name_or_id);
+                                tracing::warn!(
+                                    "Bumper '{}' has no rendered path",
+                                    bumper_name_or_id
+                                );
                             }
                         } else {
                             tracing::warn!("Bumper '{}' not found", bumper_name_or_id);

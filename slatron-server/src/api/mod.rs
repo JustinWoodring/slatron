@@ -68,10 +68,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/scripts/:id", delete(scripts_api::delete_script))
         .route("/scripts/:id/validate", post(scripts_api::validate_script))
         .route("/scripts/:id/execute", post(scripts_api::execute_script))
-        // Bumpers
-        .route("/bumpers", get(bumper_api::list_bumpers))
+        // Bumpers (Editor only)
         .route("/bumpers", post(bumper_api::create_bumper))
-        .route("/bumpers/:id", get(bumper_api::get_bumper))
         .route("/bumpers/:id", put(bumper_api::update_bumper))
         .route("/bumpers/:id", delete(bumper_api::delete_bumper))
         .route("/bumpers/:id/render", post(bumper_api::render_bumper))
@@ -136,5 +134,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
             "/system/capabilities",
             get(settings_api::get_system_capabilities),
         )
+        // Bumpers (Public for Nodes)
+        .route("/bumpers", get(bumper_api::list_bumpers))
+        .route("/bumpers/:id", get(bumper_api::get_bumper))
         .merge(protected_routes)
 }

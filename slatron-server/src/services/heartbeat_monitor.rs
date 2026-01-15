@@ -7,8 +7,8 @@ use std::time::Duration;
 use tokio::time::interval;
 
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 struct GenerationGuard {
     node_id: i32,
@@ -28,7 +28,8 @@ pub async fn run(state: AppState) {
     let mut tick = interval(Duration::from_secs(10));
     // Track last triggered Content ID per Node ID to prevent double triggers for same song
     // Map<NodeID, (ContentID, Timestamp)>
-    let last_triggered_content: Arc<Mutex<HashMap<i32, (i32, Instant)>>> = Arc::new(Mutex::new(HashMap::new()));
+    let last_triggered_content: Arc<Mutex<HashMap<i32, (i32, Instant)>>> =
+        Arc::new(Mutex::new(HashMap::new()));
     // Track known content on node to detect unloads
     // Track active processing tasks to prevent stacking
     let mut last_known_content: HashMap<i32, i32> = HashMap::new();
@@ -42,11 +43,13 @@ pub async fn run(state: AppState) {
         }
 
         if let Err(e) = process_dj_logic(
-            &state, 
-            last_triggered_content.clone(), 
+            &state,
+            last_triggered_content.clone(),
             &mut last_known_content,
-            active_generations.clone()
-        ).await {
+            active_generations.clone(),
+        )
+        .await
+        {
             tracing::error!("DJ Logic error: {}", e);
         }
     }
@@ -106,12 +109,15 @@ async fn process_dj_logic(
         {
             if let Ok(set) = active_generations.lock() {
                 if set.contains(&node_id) {
-                    tracing::debug!("Node {} skipped: DJ generation currently in progress.", node_id);
+                    tracing::debug!(
+                        "Node {} skipped: DJ generation currently in progress.",
+                        node_id
+                    );
                     continue;
                 }
             }
         }
-        
+
         let current_content_id_val = node.current_content_id.unwrap_or(0); // 0 for cold start
 
         // Detect Content Change (Unload)
@@ -122,15 +128,28 @@ async fn process_dj_logic(
                     .filter(c_dsl::id.eq(*prev_id))
                     .first::<ContentItem>(&mut conn)
                     .optional()?;
-                
+
                 if let Some(prev_item) = prev_content_opt {
-                     let t_scripts_str = prev_item.transformer_scripts.clone().unwrap_or_default();
-                     let t_config = crate::services::script_service::ScriptService::parse_config_string(&t_scripts_str);
-                     for cfg in &t_config {
-                         if let Err(e) = state.script_service.call_entry_point(state, cfg, &prev_item, None, "on_unload") {
-                            tracing::warn!("Failed to run on_unload for content {}: {}", prev_item.id.unwrap_or_default(), e);
-                         }
-                     }
+                    let t_scripts_str = prev_item.transformer_scripts.clone().unwrap_or_default();
+                    let t_config =
+                        crate::services::script_service::ScriptService::parse_config_string(
+                            &t_scripts_str,
+                        );
+                    for cfg in &t_config {
+                        if let Err(e) = state.script_service.call_entry_point(
+                            state,
+                            cfg,
+                            &prev_item,
+                            None,
+                            "on_unload",
+                        ) {
+                            tracing::warn!(
+                                "Failed to run on_unload for content {}: {}",
+                                prev_item.id.unwrap_or_default(),
+                                e
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -150,13 +169,17 @@ async fn process_dj_logic(
                     // If we triggered recently (< 45s), skip and let it load.
                     // If it's been > 45s and STILL 0, retry.
                     if last_time.elapsed().as_secs() < 45 {
-                        tracing::debug!("Node {} Cold Start still loading (waited {}s)", node_id, last_time.elapsed().as_secs());
+                        tracing::debug!(
+                            "Node {} Cold Start still loading (waited {}s)",
+                            node_id,
+                            last_time.elapsed().as_secs()
+                        );
                         continue;
                     }
                     tracing::warn!("Node {} Cold Start stuck for >45s. Retrying...", node_id);
                 } else {
-                     // Normal Content: strict dedupe. We only support "Smart Schedule" once per song.
-                     continue;
+                    // Normal Content: strict dedupe. We only support "Smart Schedule" once per song.
+                    continue;
                 }
             }
         }
@@ -260,14 +283,19 @@ async fn process_dj_logic(
         let mut candidate_map: HashMap<i32, crate::models::Schedule> = HashMap::new();
         // Insert globals first
         for s in global_schedules {
-            if let Some(sid) = s.id { candidate_map.insert(sid, s); }
+            if let Some(sid) = s.id {
+                candidate_map.insert(sid, s);
+            }
         }
         // Insert node schedules (overwriting if same ID)
         for s in node_schedules_all {
-             if let Some(sid) = s.id { candidate_map.insert(sid, s); }
+            if let Some(sid) = s.id {
+                candidate_map.insert(sid, s);
+            }
         }
-        
-        let mut active_schedules: Vec<crate::models::Schedule> = candidate_map.into_values().collect();
+
+        let mut active_schedules: Vec<crate::models::Schedule> =
+            candidate_map.into_values().collect();
         // Sort by Priority Descending
         active_schedules.sort_by(|a, b| b.priority.cmp(&a.priority));
 
@@ -293,13 +321,13 @@ async fn process_dj_logic(
             .as_deref()
             .and_then(|s| s.parse().ok())
             .unwrap_or(chrono_tz::UTC);
-        
+
         let now_utc = Utc::now();
         let now_target = now_utc.with_timezone(&tz);
         let current_time = now_target.time();
         let current_dow = now_target.weekday().number_from_monday() as i32 - 1;
         let current_date = now_target.date_naive();
-        
+
         // CASCADING SCHEDULE CHECK
         for schedule in active_schedules {
             if let Some(sched_id) = schedule.id {
@@ -322,7 +350,7 @@ async fn process_dj_logic(
                     };
 
                     if !matches_day {
-                         return false;
+                        return false;
                     }
 
                     let start = b.start_time;
@@ -336,38 +364,50 @@ async fn process_dj_logic(
                 if let Some(block) = active_block {
                     // FOUND ACTIVE BLOCK! This schedule wins.
                     active_schedule = Some(schedule.clone());
-                    
+
                     // Populate Block Info
                     let start = block.start_time;
                     let start_secs = start.num_seconds_from_midnight();
                     let end_secs = start_secs + (block.duration_minutes as u32 * 60);
                     let curr_secs = current_time.num_seconds_from_midnight();
                     let remaining_mins = (end_secs as i64 - curr_secs as i64) / 60;
-                    
-                    // Upcoming... 
-                    let items: Vec<&ScheduleBlock> = blocks.iter()
+
+                    // Upcoming...
+                    let items: Vec<&ScheduleBlock> = blocks
+                        .iter()
                         .filter(|b| {
-                            let matches_day = if let Some(d) = b.specific_date { d == current_date } 
-                            else if let Some(dow) = b.day_of_week { dow == current_dow } else { false };
-                            if !matches_day { return false; }
+                            let matches_day = if let Some(d) = b.specific_date {
+                                d == current_date
+                            } else if let Some(dow) = b.day_of_week {
+                                dow == current_dow
+                            } else {
+                                false
+                            };
+                            if !matches_day {
+                                return false;
+                            }
                             b.start_time > block.start_time
                         })
                         .collect::<Vec<&ScheduleBlock>>();
-                    
+
                     let mut upcoming_refs = items;
                     upcoming_refs.sort_by_key(|b| b.start_time);
-                    let upcoming_json: Vec<serde_json::Value> = upcoming_refs.into_iter().take(3).map(|b| {
-                        serde_json::json!({
-                           "title": format!("Block {}", b.id.unwrap_or(0)),
-                           "start_time": b.start_time.to_string(),
-                           "content_type": "block"
+                    let upcoming_json: Vec<serde_json::Value> = upcoming_refs
+                        .into_iter()
+                        .take(3)
+                        .map(|b| {
+                            serde_json::json!({
+                               "title": format!("Block {}", b.id.unwrap_or(0)),
+                               "start_time": b.start_time.to_string(),
+                               "content_type": "block"
+                            })
                         })
-                    }).collect();
+                        .collect();
 
                     active_block_info = Some(serde_json::json!({
                         "block": {
                             "id": block.id,
-                            "name": format!("Block {}", block.id.unwrap_or(0)), 
+                            "name": format!("Block {}", block.id.unwrap_or(0)),
                             "start_time": block.start_time.to_string(),
                             "duration": block.duration_minutes,
                             "dj_id": block.dj_id
@@ -378,22 +418,31 @@ async fn process_dj_logic(
 
                     // Block DJ Override
                     if let Some(blk_dj_id) = block.dj_id {
-                         dj_profile_opt = dj_dsl::dj_profiles.filter(dj_dsl::id.eq(blk_dj_id)).first::<DjProfile>(&mut conn).optional()?;
+                        dj_profile_opt = dj_dsl::dj_profiles
+                            .filter(dj_dsl::id.eq(blk_dj_id))
+                            .first::<DjProfile>(&mut conn)
+                            .optional()?;
                     }
                     // Block Script
                     if let Some(sid) = block.script_id {
-                         if let Ok(script) = sc_dsl::scripts.filter(sc_dsl::id.eq(sid)).first::<Script>(&mut conn) {
-                             active_block_script = Some(script.script_content);
-                         }
+                        if let Ok(script) = sc_dsl::scripts
+                            .filter(sc_dsl::id.eq(sid))
+                            .first::<Script>(&mut conn)
+                        {
+                            active_block_script = Some(script.script_content);
+                        }
                     }
-                    
+
                     // Fallback to Schedule DJ if block didn't specify
                     if dj_profile_opt.is_none() {
                         if let Some(sched_dj_id) = schedule.dj_id {
-                             dj_profile_opt = dj_dsl::dj_profiles.filter(dj_dsl::id.eq(sched_dj_id)).first::<DjProfile>(&mut conn).optional()?;
+                            dj_profile_opt = dj_dsl::dj_profiles
+                                .filter(dj_dsl::id.eq(sched_dj_id))
+                                .first::<DjProfile>(&mut conn)
+                                .optional()?;
                         }
                     }
-                    
+
                     break; // STOP here, we found our block.
                 }
             }
@@ -401,18 +450,23 @@ async fn process_dj_logic(
 
         // If after checking ALL active schedules we found nothing...
         if active_schedule.is_none() {
-             // If Trigger was 'Cold Start' but NO active block matches time across ANY active schedule?
-             // Then we shouldn't play anything. It's off-air time.
-             if node.current_content_id.is_none() {
-                tracing::info!("DEBUG: Cold start aborted - no active block found in any schedule.");
+            // If Trigger was 'Cold Start' but NO active block matches time across ANY active schedule?
+            // Then we shouldn't play anything. It's off-air time.
+            if node.current_content_id.is_none() {
+                tracing::info!(
+                    "DEBUG: Cold start aborted - no active block found in any schedule."
+                );
                 continue;
             } else {
                 // If we are currently playing content, but the block ended/no block matches:
                 // We must STOP/PAUSE the node.
-                tracing::info!("Node {} outside of active block. Stopping playback.", node_id);
+                tracing::info!(
+                    "Node {} outside of active block. Stopping playback.",
+                    node_id
+                );
                 let nodes_map = state.connected_nodes.read().await;
                 if let Some(tx) = nodes_map.get(&node_id) {
-                    let cmd = NodeCommand::Pause; 
+                    let cmd = NodeCommand::Pause;
                     if let Err(e) = tx.send(ServerMessage::Command { command: cmd }) {
                         tracing::error!("Failed to send Stop/Pause: {}", e);
                     }
@@ -422,11 +476,15 @@ async fn process_dj_logic(
         }
 
         // 3. Fallback to ANY active DJ
+        // DISABLED: We only want DJ logic if explicitly assigned to the schedule or block.
+        // If the user wants a DJ, they should verify the Schedule or Block has a DJ Profile assigned.
+        /*
         if dj_profile_opt.is_none() {
             dj_profile_opt = dj_dsl::dj_profiles
                 .first::<DjProfile>(&mut conn)
                 .optional()?;
         }
+        */
 
         // Now we finalize the DJ choice
         if let Some(dj) = dj_profile_opt {
@@ -472,7 +530,7 @@ async fn process_dj_logic(
                     .filter(c_dsl::is_dj_accessible.eq(true))
                     // .filter(c_dsl::id.ne_all(&recent_ids)) // Diesel check might be complex with empty vec, do in memory
                     .order(diesel::dsl::sql::<diesel::sql_types::Integer>("RANDOM()"))
-                    .limit(200) 
+                    .limit(200)
                     .load::<ContentItem>(&mut conn)
                     .unwrap_or_default();
 
@@ -489,7 +547,7 @@ async fn process_dj_logic(
                 // Filter out recently played and current song
                 candidates.retain(|c| {
                     if let Some(cid) = c.id {
-                         !recent_ids.contains(&cid) && cid != current_content_id_val
+                        !recent_ids.contains(&cid) && cid != current_content_id_val
                     } else {
                         false
                     }
@@ -506,25 +564,28 @@ async fn process_dj_logic(
                     let tts_provider_clone = tts_provider.cloned();
                     let state_clone = state.clone();
                     let _active_block_script_clone = active_block_script.clone();
-                    
+
                     // Build Context String with Recent Plays
                     // We need to fetch titles for recent IDs to be useful for LLM
                     // For performance, we can just grab titles from the DB or look them up if cached.
                     // Doing a quick DB lookup for the last 5 titles
                     let recent_titles_str = if !recent_ids.is_empty() {
-                         use crate::schema::content_items::dsl as c_dsl;
-                         let last_5_ids = recent_ids.iter().take(5).cloned().collect::<Vec<i32>>();
-                         let titles = c_dsl::content_items
+                        use crate::schema::content_items::dsl as c_dsl;
+                        let last_5_ids = recent_ids.iter().take(5).cloned().collect::<Vec<i32>>();
+                        let titles = c_dsl::content_items
                             .filter(c_dsl::id.eq_any(last_5_ids))
                             .select(c_dsl::title)
                             .load::<String>(&mut conn)
                             .unwrap_or_default();
-                         
-                         if !titles.is_empty() {
-                             format!("Recently played tracks (Do not repeat these): {}", titles.join(", "))
-                         } else {
-                             String::new()
-                         }
+
+                        if !titles.is_empty() {
+                            format!(
+                                "Recently played tracks (Do not repeat these): {}",
+                                titles.join(", ")
+                            )
+                        } else {
+                            String::new()
+                        }
                     } else {
                         String::new()
                     };
@@ -556,29 +617,29 @@ async fn process_dj_logic(
 
                     // Construct Schedule Info for context injection
                     let schedule_info = if let Some(block) = active_block_info {
-                         // Only pass if we have block info
-                         Some(block) 
+                        // Only pass if we have block info
+                        Some(block)
                     } else {
-                         None
+                        None
                     };
 
                     tokio::spawn(async move {
                         // RAII Guard to remove from active set when task finishes/panics
                         let _guard = GenerationGuard {
                             node_id,
-                            active_set: active_generations_for_guard
+                            active_set: active_generations_for_guard,
                         };
 
                         // 1. Generate Dialogue with Track Selection
                         let intro_prompt = if current_content_id_val == 0 {
-                             "You are starting a set. Pick the first song from the list.".to_string()
+                            "You are starting a set. Pick the first song from the list.".to_string()
                         } else {
                             format!(
                                 "Current song '{}' is ending. Introduce the next song.",
                                 current_song_title
                             )
                         };
-                        
+
                         // Inject context
                         let full_prompt = if !recent_titles_str.is_empty() {
                             format!("{}\nContext: {}", intro_prompt, recent_titles_str)
@@ -612,30 +673,57 @@ async fn process_dj_logic(
                             .next_track_id
                             .and_then(|id| candidates_clone.iter().find(|c| c.id == Some(id)))
                             .or_else(|| {
-                                tracing::warn!("LLM did not select a valid track ID. Falling back to random.");
+                                tracing::warn!(
+                                    "LLM did not select a valid track ID. Falling back to random."
+                                );
                                 candidates_clone.first()
                             });
-                        
+
                         // 3. Prepare TTS (if speaking)
                         let mut tts_url: Option<String> = None;
-                        if dj_clone.talkativeness >= 0.99 || rand::random::<f32>() <= dj_clone.talkativeness {
-                             tracing::debug!("DJ Generated Dialogue: {}", response.text);
-                             let output_dir = std::path::PathBuf::from("static/tts");
-                             let (voice_name, speech_modifier) = if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&dj_clone.voice_config_json) {
-                                 (
-                                    cfg.get("voice_name").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                                    cfg.get("speech_modifier").and_then(|v| v.as_str()).map(|s| s.to_string())
-                                 )
-                            } else { (None, None) };
-                            
+                        if dj_clone.talkativeness >= 0.99
+                            || rand::random::<f32>() <= dj_clone.talkativeness
+                        {
+                            tracing::debug!("DJ Generated Dialogue: {}", response.text);
+                            let output_dir = std::path::PathBuf::from("static/tts");
+                            let (voice_name, speech_modifier) = if let Ok(cfg) =
+                                serde_json::from_str::<serde_json::Value>(
+                                    &dj_clone.voice_config_json,
+                                ) {
+                                (
+                                    cfg.get("voice_name")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                    cfg.get("speech_modifier")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string()),
+                                )
+                            } else {
+                                (None, None)
+                            };
+
                             if let Some(prov) = tts_provider_clone {
-                                match state_clone.tts_service.generate_speech(
-                                    &response.text, voice_name, response.emotion, speech_modifier, &output_dir, &prov
-                                ).await {
+                                match state_clone
+                                    .tts_service
+                                    .generate_speech(
+                                        &response.text,
+                                        voice_name,
+                                        response.emotion,
+                                        speech_modifier,
+                                        &output_dir,
+                                        &prov,
+                                    )
+                                    .await
+                                {
                                     Ok(path) => {
-                                         let filename = path.file_name().unwrap().to_string_lossy();
-                                         tts_url = Some(format!("http://{}:{}/tts/{}", state_clone.config.server.host, state_clone.config.server.port, filename));
-                                    },
+                                        let filename = path.file_name().unwrap().to_string_lossy();
+                                        tts_url = Some(format!(
+                                            "http://{}:{}/tts/{}",
+                                            state_clone.config.server.host,
+                                            state_clone.config.server.port,
+                                            filename
+                                        ));
+                                    }
                                     Err(e) => tracing::error!("TTS Generation Failed: {}", e),
                                 }
                             }
@@ -649,30 +737,49 @@ async fn process_dj_logic(
                             let nodes_map = state_clone.connected_nodes.read().await;
                             if let Some(tx) = nodes_map.get(&node_id) {
                                 let song_id = track.id.expect("Song ID missing");
-                                
+
                                 // History Tracking
                                 {
                                     let mut rp = state_clone.recent_plays.write().await;
                                     rp.push_front(song_id);
-                                    if rp.len() > 20 { rp.pop_back(); }
+                                    if rp.len() > 20 {
+                                        rp.pop_back();
+                                    }
                                 }
 
                                 // Run on_load hook
-                                let t_scripts_str = track.transformer_scripts.clone().unwrap_or_default();
+                                let t_scripts_str =
+                                    track.transformer_scripts.clone().unwrap_or_default();
                                 let t_config = crate::services::script_service::ScriptService::parse_config_string(&t_scripts_str);
                                 for cfg in &t_config {
-                                     // Call on_load
-                                     if let Err(e) = state_clone.script_service.call_entry_point(&state_clone, cfg, track, Some(&dj_clone), "on_load") {
-                                        tracing::warn!("Failed to run on_load for content {}: {}", song_id, e);
-                                     }
+                                    // Call on_load
+                                    if let Err(e) = state_clone.script_service.call_entry_point(
+                                        &state_clone,
+                                        cfg,
+                                        track,
+                                        Some(&dj_clone),
+                                        "on_load",
+                                    ) {
+                                        tracing::warn!(
+                                            "Failed to run on_load for content {}: {}",
+                                            song_id,
+                                            e
+                                        );
+                                    }
                                 }
 
-                                tracing::info!("Sending LoadContent for song {} (AI Selected: {})", song_id, response.next_track_id.is_some());
+                                tracing::info!(
+                                    "Sending LoadContent for song {} (AI Selected: {})",
+                                    song_id,
+                                    response.next_track_id.is_some()
+                                );
                                 let load_cmd = NodeCommand::LoadContent {
                                     content_id: song_id,
                                     path: Some(track.content_path.clone()),
                                 };
-                                if let Err(e) = tx.send(ServerMessage::Command { command: load_cmd }) {
+                                if let Err(e) =
+                                    tx.send(ServerMessage::Command { command: load_cmd })
+                                {
                                     tracing::error!("Failed to send LoadContent: {}", e);
                                 } else {
                                     // SUCCESS: Update dedupe map to prevent immediate re-trigger
@@ -682,15 +789,15 @@ async fn process_dj_logic(
                                         map.insert(node_id, (0, Instant::now()));
                                     }
                                 }
-                                
+
                                 // Inject TTS if available (plays over new track start)
                                 if let Some(url) = tts_url {
-                                     let inj_cmd = NodeCommand::InjectAudio { url, mix: true };
-                                     let _ = tx.send(ServerMessage::Command { command: inj_cmd });
+                                    let inj_cmd = NodeCommand::InjectAudio { url, mix: true };
+                                    let _ = tx.send(ServerMessage::Command { command: inj_cmd });
                                 }
                             }
                         } else {
-                             tracing::error!("No tracks available to queue!");
+                            tracing::error!("No tracks available to queue!");
                         }
                     });
                 }
