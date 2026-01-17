@@ -41,6 +41,8 @@ pub struct AppState {
     pub connected_nodes: Arc<RwLock<HashMap<i32, UnboundedSender<ServerMessage>>>>,
     // Track recent plays globally (Content IDs)
     pub recent_plays: Arc<RwLock<VecDeque<i32>>>,
+    // Login attempts: Username -> (Count, FirstAttemptTime)
+    pub login_attempts: Arc<RwLock<HashMap<String, (u32, std::time::SystemTime)>>>,
 }
 
 use clap::Parser;
@@ -229,6 +231,7 @@ async fn main() -> Result<()> {
         dj_dialogue_service,
         connected_nodes: Arc::new(RwLock::new(HashMap::new())),
         recent_plays: Arc::new(RwLock::new(VecDeque::new())),
+        login_attempts: Arc::new(RwLock::new(HashMap::new())),
     };
 
     // Spawn heartbeat monitor
