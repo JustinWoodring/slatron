@@ -60,6 +60,21 @@ fn register_content_loader_functions(engine: &mut Engine) {
 
     engine.register_fn("download_file", |url: String, output: String| -> String {
         tracing::info!(target: "slatron_node::rhai", "Downloading {} to {}", url, output);
+
+        // Security check: Prevent directory traversal
+        // Note: checking 'output' before expansion allows "~/" but should block "../"
+        // However, we must be careful.
+        let path = std::path::Path::new(&output);
+        if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+             let err = format!("Security Alert: Script attempted to download file to unsafe path: {}", output);
+             tracing::error!(target: "slatron_node::rhai", "{}", err);
+             return err;
+        }
+        // For slatron-node, absolute paths might be allowed if user trusts the script,
+        // but generally we should discourage arbitrary writes.
+        // If it starts with "/" and not part of expected paths, it's risky.
+        // But let's at least block traversal ".." which is the most common exploit.
+
         use std::process::Command;
 
         // Manually expand ~ to HOME since Command doesn't run via shell

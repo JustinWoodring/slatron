@@ -60,6 +60,14 @@ fn register_content_loader_functions(engine: &mut Engine) {
     engine.register_fn(
         "download_file",
         |url: String, output_path: String| -> bool {
+            if !is_safe_path(&output_path) {
+                tracing::error!(
+                    "Security Alert: Script attempted to download file to unsafe path: {}",
+                    output_path
+                );
+                return false;
+            }
+
             let status = std::process::Command::new("curl")
                 .arg("-L")
                 .arg("-o")
@@ -199,6 +207,22 @@ pub fn validate_script(script_content: &str, script_type: &str) -> Vec<String> {
     }
 }
 
+pub(crate) fn is_safe_path(path_str: &str) -> bool {
+    let path = std::path::Path::new(path_str);
+    // Prevent directory traversal
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    // Prevent absolute paths to avoid writing to system directories
+    if path.is_absolute() {
+        return false;
+    }
+    true
+}
+
 pub fn execute_script(
     script_content: &str,
     script_type: &str,
@@ -271,3 +295,6 @@ pub fn execute_script(
     let cmds = commands.lock().map(|c| c.clone()).unwrap_or_default();
     Ok((result, cmds))
 }
+
+#[cfg(test)]
+mod path_test;
