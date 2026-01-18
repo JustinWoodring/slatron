@@ -15,6 +15,7 @@ pub fn spawn_mpv(socket_path: &str) -> Result<Child> {
 
     let child = Command::new("mpv")
         .arg("--idle")
+        .arg("--player-operation-mode=pseudo-gui")
         .arg(format!("--input-ipc-server={}", socket_path))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
