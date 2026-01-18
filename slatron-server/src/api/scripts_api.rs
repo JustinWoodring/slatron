@@ -206,11 +206,8 @@ pub async fn execute_script(
     // Verify script content
     tracing::info!("Script Content Preview: {:.100}...", script.script_content);
 
-    // NEW: Use ScriptService for server-side scripts
-    if script.script_type == "server_context"
-        || script.script_type == "transformer"
-        || script.script_type == "content_loader"
-    {
+    // Use ScriptService for server-side scripts (except content_loader which needs shell_execute)
+    if script.script_type == "server_context" || script.script_type == "transformer" {
         // Clone data for blocking task
         let s_content = script.script_content.clone();
         let s_type = script.script_type.clone();
