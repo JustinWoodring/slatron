@@ -49,14 +49,8 @@ pub fn create_engine(
 }
 
 fn register_content_loader_functions(engine: &mut Engine) {
-    engine.register_fn("shell_execute", |cmd: String| -> String {
-        use std::process::Command;
-
-        match Command::new("sh").arg("-c").arg(&cmd).output() {
-            Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
-            Err(e) => format!("Error: {}", e),
-        }
-    });
+    // shell_execute removed for security.
+    // Use download_file or other specialized functions instead.
 
     engine.register_fn("download_file", |url: String, output: String| -> String {
         tracing::info!(target: "slatron_node::rhai", "Downloading {} to {}", url, output);
@@ -431,3 +425,6 @@ pub fn execute_script_function(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod security_test;
