@@ -58,3 +58,4 @@ zip = "0.6"
 walkdir = "2"
 
 [dev-dependencies]
+tempfile = "3.24.0"
