@@ -49,3 +49,16 @@ pub fn authenticate_user(conn: &mut DbConnection, username: &str, password: &str
         Err(anyhow::anyhow!("Invalid credentials"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_password_hashing() {
+        let password = "mysecurepassword";
+        let hash = hash_password(password).unwrap();
+        assert!(verify_password(password, &hash).unwrap());
+        assert!(!verify_password("wrongpassword", &hash).unwrap());
+    }
+}

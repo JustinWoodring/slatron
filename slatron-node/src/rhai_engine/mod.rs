@@ -70,6 +70,14 @@ fn register_content_loader_functions(engine: &mut Engine) {
              tracing::error!(target: "slatron_node::rhai", "{}", err);
              return err;
         }
+
+        // Security Check: Validate Protocol
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            let err = format!("Security Alert: Script attempted to download using unsafe protocol: {}", url);
+            tracing::error!(target: "slatron_node::rhai", "{}", err);
+            return err;
+        }
+
         // For slatron-node, absolute paths might be allowed if user trusts the script,
         // but generally we should discourage arbitrary writes.
         // If it starts with "/" and not part of expected paths, it's risky.

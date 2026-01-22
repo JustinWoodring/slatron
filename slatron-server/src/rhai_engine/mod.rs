@@ -68,6 +68,15 @@ fn register_content_loader_functions(engine: &mut Engine) {
                 return false;
             }
 
+            // Security Check: Validate Protocol
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                tracing::error!(
+                    "Security Alert: Script attempted to download using unsafe protocol: {}",
+                    url
+                );
+                return false;
+            }
+
             let status = std::process::Command::new("curl")
                 .arg("-L")
                 .arg("-o")
@@ -298,3 +307,6 @@ pub fn execute_script(
 
 #[cfg(test)]
 mod path_test;
+
+#[cfg(test)]
+mod security_test;
