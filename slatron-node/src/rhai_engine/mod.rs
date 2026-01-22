@@ -49,14 +49,12 @@ pub fn create_engine(
 }
 
 fn register_content_loader_functions(engine: &mut Engine) {
+    // SECURITY: shell_execute removed to prevent RCE. Use download_file for content.
+    /*
     engine.register_fn("shell_execute", |cmd: String| -> String {
-        use std::process::Command;
-
-        match Command::new("sh").arg("-c").arg(&cmd).output() {
-            Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
-            Err(e) => format!("Error: {}", e),
-        }
+        // ... removed ...
     });
+    */
 
     engine.register_fn("download_file", |url: String, output: String| -> String {
         tracing::info!(target: "slatron_node::rhai", "Downloading {} to {}", url, output);
@@ -430,4 +428,24 @@ pub fn execute_script_function(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shell_execute_removed() {
+        let engine = create_engine("transformer", None, None);
+        let script = r#"shell_execute("echo vulnerable")"#;
+
+        // This should FAIL now as the function is removed
+        match engine.eval::<String>(script) {
+            Ok(output) => panic!("Shell execute SHOULD FAIL but returned: {}", output),
+            Err(e) => {
+                 let err_str = e.to_string();
+                 assert!(err_str.contains("Function not found"), "Unexpected error: {}", err_str);
+            }
+        }
+    }
 }
