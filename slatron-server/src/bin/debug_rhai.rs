@@ -6,7 +6,7 @@ fn register_content_loader_functions(engine: &mut Engine) {
         |cmd: String, _args: rhai::Array| -> rhai::Map {
             println!("MOCKED shell_execute: {}", cmd);
             let mut map = rhai::Map::new();
-            map.insert("code".into(), (0 as i64).into());
+            map.insert("code".into(), 0_i64.into());
             map.insert("stdout".into(), "{}".into());
             map.insert("stderr".into(), "".into());
             map
@@ -62,11 +62,8 @@ fn main() {
         Ok(_) => println!("Call load_content Complete"),
         Err(e) => {
             println!("Call load_content Error: {}", e);
-            match *e {
-                rhai::EvalAltResult::ErrorFunctionNotFound(sig, _) => {
-                    println!("Fn Not Found: {}", sig)
-                }
-                _ => {}
+            if let rhai::EvalAltResult::ErrorFunctionNotFound(sig, _) = *e {
+                println!("Fn Not Found: {}", sig)
             }
         }
     }

@@ -126,7 +126,7 @@ pub fn calculate_collapsed_schedule(
                             script_id: block.script_id,
                             priority: item.effective_priority,
                             schedule_name: item.schedule.name.clone(),
-                            schedule_id: schedule_id,
+                            schedule_id,
                             block_id: block.id.expect("Block ID missing"),
                             dj_id: block.dj_id,
                             dj_name: d_name,

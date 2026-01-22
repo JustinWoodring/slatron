@@ -616,12 +616,7 @@ async fn process_dj_logic(
                     let last_triggered_content_clone = last_triggered_content.clone();
 
                     // Construct Schedule Info for context injection
-                    let schedule_info = if let Some(block) = active_block_info {
-                        // Only pass if we have block info
-                        Some(block)
-                    } else {
-                        None
-                    };
+                    let schedule_info = active_block_info;
 
                     tokio::spawn(async move {
                         // RAII Guard to remove from active set when task finishes/panics

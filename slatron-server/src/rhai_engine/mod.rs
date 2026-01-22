@@ -198,7 +198,7 @@ fn run_shell_execute(cmd: String, args: Vec<rhai::Dynamic>) -> rhai::Map {
             let err_msg = format!("Execution failed: {}", e);
             tracing::error!("Shell Spawn Failed: {}", err_msg);
 
-            map.insert("code".into(), (-1 as i64).into());
+            map.insert("code".into(), (-1_i64).into());
             map.insert("stdout".into(), "".into());
             map.insert("stderr".into(), err_msg.into());
         }

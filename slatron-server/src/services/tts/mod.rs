@@ -1,6 +1,6 @@
+mod elevenlabs_adapter;
 mod gemini_adapter;
 mod orpheus_adapter;
-mod elevenlabs_adapter;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -9,9 +9,9 @@ use std::path::PathBuf;
 
 use crate::models::AiProvider;
 
+pub use elevenlabs_adapter::ElevenLabsTtsAdapter;
 pub use gemini_adapter::GeminiTtsAdapter;
 pub use orpheus_adapter::OrpheusTtsAdapter;
-pub use elevenlabs_adapter::ElevenLabsTtsAdapter;
 
 /// Configuration for TTS generation
 #[derive(Debug, Clone)]
@@ -35,6 +35,12 @@ pub trait TtsProvider: Send + Sync {
 /// Main TTS service that routes to appropriate provider
 pub struct TtsService {
     client: Client,
+}
+
+impl Default for TtsService {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TtsService {

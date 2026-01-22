@@ -2,9 +2,7 @@ use super::{TtsConfig, TtsProvider};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use reqwest::Client;
-use serde_json::json;
 use std::path::PathBuf;
-use uuid::Uuid;
 
 use crate::models::AiProvider;
 
@@ -60,12 +58,10 @@ impl OrpheusTtsAdapter {
                 } else {
                     tag_buffer.push(c);
                 }
+            } else if c == '<' {
+                in_tag = true;
             } else {
-                if c == '<' {
-                    in_tag = true;
-                } else {
-                    output.push(c);
-                }
+                output.push(c);
             }
         }
 
@@ -119,7 +115,10 @@ impl TtsProvider for OrpheusTtsAdapter {
                 "stream": true
             });
 
-            tracing::info!("Requesting Orpheus TTS from LM Studio: {}", self.endpoint_url);
+            tracing::info!(
+                "Requesting Orpheus TTS from LM Studio: {}",
+                self.endpoint_url
+            );
             let mut res = self
                 .client
                 .post(&self.endpoint_url)
