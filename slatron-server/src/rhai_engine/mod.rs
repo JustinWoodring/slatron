@@ -68,6 +68,14 @@ fn register_content_loader_functions(engine: &mut Engine) {
                 return false;
             }
 
+            if !is_safe_url(&url) {
+                tracing::error!(
+                    "Security Alert: Script attempted to download file from unsafe URL: {}",
+                    url
+                );
+                return false;
+            }
+
             let status = std::process::Command::new("curl")
                 .arg("-L")
                 .arg("-o")
@@ -218,6 +226,19 @@ pub(crate) fn is_safe_path(path_str: &str) -> bool {
     }
     // Prevent absolute paths to avoid writing to system directories
     if path.is_absolute() {
+        return false;
+    }
+    true
+}
+
+pub(crate) fn is_safe_url(url: &str) -> bool {
+    // Prevent argument injection
+    if url.starts_with("-") {
+        return false;
+    }
+    // Enforce protocol (optional but good practice)
+    let url_lower = url.to_lowercase();
+    if !url_lower.starts_with("http://") && !url_lower.starts_with("https://") {
         return false;
     }
     true

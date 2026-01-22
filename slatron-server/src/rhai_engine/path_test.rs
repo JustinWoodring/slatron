@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::rhai_engine::is_safe_path;
+    use crate::rhai_engine::{is_safe_path, is_safe_url};
 
     #[test]
     fn test_is_safe_path() {
@@ -21,5 +21,26 @@ mod tests {
         if cfg!(windows) {
              assert!(!is_safe_path("C:\\Windows\\System32"));
         }
+    }
+
+    #[test]
+    fn test_is_safe_url() {
+        // Valid URLs
+        assert!(is_safe_url("http://example.com/file.jpg"));
+        assert!(is_safe_url("https://example.com/file.jpg"));
+        assert!(is_safe_url("HTTPS://EXAMPLE.COM/FILE.JPG"));
+
+        // Invalid protocols
+        assert!(!is_safe_url("ftp://example.com/file.txt"));
+        assert!(!is_safe_url("file:///etc/passwd"));
+        assert!(!is_safe_url("gopher://example.com"));
+
+        // malicious injections
+        assert!(!is_safe_url("-o /etc/shadow"));
+        assert!(!is_safe_url("--output /etc/shadow"));
+        assert!(!is_safe_url("-L"));
+
+        // Plain strings
+        assert!(!is_safe_url("example.com"));
     }
 }
