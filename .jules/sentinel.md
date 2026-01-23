@@ -7,3 +7,8 @@
 **Vulnerability:** The `download_file` function exposed to Rhai scripts in both `slatron-server` and `slatron-node` used `curl` without validating the URL protocol.
 **Learning:** Tools like `curl` support many protocols (`file://`, `ftp://`, etc.) which can be abused for SSRF or LFI if user input is passed directly to them. Simply relying on "it downloads stuff" hides the complexity of the underlying tool's capabilities.
 **Prevention:** Always whitelist allowed protocols (e.g., `http://`, `https://`) when using generic download tools or libraries, especially when input comes from a scriptable environment.
+
+## 2025-05-23 - [DoS Risk in In-Memory Rate Limiting]
+**Vulnerability:** The login rate limiter used an unbounded `HashMap` to track attempts by username. Attackers could exhaust server memory by sending requests with unique usernames.
+**Learning:** In-memory state tracking must always have bounds or eviction policies. Relying on "normal usage" assumptions (limited number of users) is dangerous when input is unauthenticated.
+**Prevention:** Implement active cleanup (checking size on insert) or use dedicated rate-limiting libraries that handle expiration and capacity automatically.
