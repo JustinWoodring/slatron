@@ -2,7 +2,7 @@ use crate::models::{NewNode, Node, User};
 use crate::AppState;
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Extension, Json,
 };
 use diesel::prelude::*;
@@ -233,6 +233,7 @@ pub async fn update_node_schedules(
 pub async fn get_node_schedule(
     State(state): State<AppState>,
     Path(query_node_id): Path<i32>,
+    headers: HeaderMap,
 ) -> Result<Json<NodeScheduleResponse>, StatusCode> {
     use crate::schema::content_items::dsl::{content_items, id as content_item_id};
     use crate::schema::schedules::dsl::{is_active, priority, schedules};
@@ -243,6 +244,46 @@ pub async fn get_node_schedule(
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Auth Check
+    let mut is_authorized = false;
+
+    // 1. Check JWT (Editor/Admin access)
+    if let Some(auth_header) = headers.get("authorization").and_then(|h| h.to_str().ok()) {
+        if auth_header.starts_with("Bearer ") {
+            let token = &auth_header[7..];
+            if crate::auth::jwt::verify_token(token, state.config.jwt.secret.as_bytes()).is_ok() {
+                is_authorized = true;
+            }
+        }
+    }
+
+    // 2. Check Node Secret (Node access)
+    if !is_authorized {
+        if let Some(secret_header) = headers.get("X-Node-Secret").and_then(|h| h.to_str().ok()) {
+            use crate::schema::nodes::dsl::{
+                id as node_id_col, nodes, secret_key as secret_key_col,
+            };
+
+            let node_secret: Option<String> = nodes
+                .filter(node_id_col.eq(query_node_id))
+                .select(secret_key_col)
+                .first(&mut conn)
+                .optional()
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            if let Some(stored_secret) = node_secret {
+                // Constant time comparison would be better but standard string eq is acceptable here for now
+                if stored_secret == secret_header {
+                    is_authorized = true;
+                }
+            }
+        }
+    }
+
+    if !is_authorized {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
 
     // 1. Fetch Global Timezone Setting
     use crate::schema::global_settings::dsl::{global_settings, key, value};

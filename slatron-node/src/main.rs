@@ -504,7 +504,12 @@ async fn fetch_and_update_schedule(client: &reqwest::Client, state: &NodeState, 
     let url = format!("{}/api/nodes/{}/schedule", http_base, node_id);
     let today = chrono::Utc::now().date_naive();
 
-    if let Ok(res) = client.get(&url).send().await {
+    if let Ok(res) = client
+        .get(&url)
+        .header("X-Node-Secret", &state.config.secret_key)
+        .send()
+        .await
+    {
         if res.status().is_success() {
             if let Ok(response) = res.json::<ServerScheduleResponse>().await {
                 // Update cache

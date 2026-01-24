@@ -125,9 +125,7 @@ impl ScriptService {
         // Bumpers
         engine.register_fn("inject_bumper", |_name: String| {});
         engine.register_fn("is_top_of_hour", || -> bool { false });
-        engine.register_fn("get_current_hour", || -> i64 {
-            Local::now().hour() as i64
-        });
+        engine.register_fn("get_current_hour", || -> i64 { Local::now().hour() as i64 });
 
         Self {
             engine: Arc::new(engine),
@@ -794,12 +792,13 @@ fn fetch_schedule_context(
                 "schedule_id": schedule.id,
             });
 
-            let day_offset =
-                if block.day_of_week == Some(yesterday_dow) || block.specific_date == Some(yesterday_date) {
-                    1
-                } else {
-                    0
-                };
+            let day_offset = if block.day_of_week == Some(yesterday_dow)
+                || block.specific_date == Some(yesterday_date)
+            {
+                1
+            } else {
+                0
+            };
 
             time_remaining = serde_json::json!(calculate_remaining_minutes(
                 block.start_time,
@@ -851,8 +850,11 @@ fn fetch_schedule_context(
     // Optimization: Collect DJ IDs to fetch names
     let mut dj_ids_to_fetch = Vec::new();
     for (b, s) in &upcoming_data {
-        if let Some(did) = b.dj_id { dj_ids_to_fetch.push(did); }
-        else if let Some(did) = s.dj_id { dj_ids_to_fetch.push(did); }
+        if let Some(did) = b.dj_id {
+            dj_ids_to_fetch.push(did);
+        } else if let Some(did) = s.dj_id {
+            dj_ids_to_fetch.push(did);
+        }
     }
     dj_ids_to_fetch.sort();
     dj_ids_to_fetch.dedup();

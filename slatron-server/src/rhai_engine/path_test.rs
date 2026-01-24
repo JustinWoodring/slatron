@@ -19,7 +19,7 @@ mod tests {
         // Check Windows style absolute paths if running on windows?
         // Rust's is_absolute handles platform specifics, but our test env is Linux.
         if cfg!(windows) {
-             assert!(!is_safe_path("C:\\Windows\\System32"));
+            assert!(!is_safe_path("C:\\Windows\\System32"));
         }
     }
 }
