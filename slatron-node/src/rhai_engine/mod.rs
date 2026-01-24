@@ -16,11 +16,11 @@ pub fn create_engine(
             register_content_loader_functions(&mut engine);
         }
         "overlay" => {
-             if let Some(mpv) = mpv {
-                 register_overlay_functions(&mut engine, mpv);
-             } else {
-                 tracing::warn!("MPV client not provided for overlay script engine");
-             }
+            if let Some(mpv) = mpv {
+                register_overlay_functions(&mut engine, mpv);
+            } else {
+                tracing::warn!("MPV client not provided for overlay script engine");
+            }
         }
         "global" => {
             if let Some(mpv) = mpv {

@@ -336,11 +336,11 @@ pub async fn play_queued_bumpers(state: &NodeState) -> Result<()> {
                                         }
                                     }
 
-                                    if let Err(e) =
-                                        state
-                                            .mpv
-                                            .play(&local_path.to_string_lossy(), None, Some(false))
-                                    {
+                                    if let Err(e) = state.mpv.play(
+                                        &local_path.to_string_lossy(),
+                                        None,
+                                        Some(false),
+                                    ) {
                                         tracing::error!("Failed to play bumper: {}", e);
                                     } else {
                                         // Wait for bumper to finish

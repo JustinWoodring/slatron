@@ -119,7 +119,10 @@ impl TtsProvider for OrpheusTtsAdapter {
                 "stream": true
             });
 
-            tracing::info!("Requesting Orpheus TTS from LM Studio: {}", self.endpoint_url);
+            tracing::info!(
+                "Requesting Orpheus TTS from LM Studio: {}",
+                self.endpoint_url
+            );
             let mut res = self
                 .client
                 .post(&self.endpoint_url)

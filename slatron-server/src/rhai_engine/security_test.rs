@@ -18,10 +18,13 @@ fn test_download_file_unsafe_protocol() {
     // It might panic if eval fails, but here we expect it to return false.
     // If it fails to compile/run, unwrapping will panic, which is also a test failure.
     if let Ok(val) = result {
-         assert_eq!(val, false, "download_file should return false for file:// protocol");
+        assert_eq!(
+            val, false,
+            "download_file should return false for file:// protocol"
+        );
     } else {
-         // If eval failed, it might be due to other reasons, but let's assume valid rhai syntax
-         // If `download_file` throws exception, that's also fine as rejection.
+        // If eval failed, it might be due to other reasons, but let's assume valid rhai syntax
+        // If `download_file` throws exception, that's also fine as rejection.
     }
 
     // Also check that it returns false for other protocols
@@ -29,17 +32,20 @@ fn test_download_file_unsafe_protocol() {
         download_file("ftp://example.com/foo", "test_output.txt")
     "#;
     let result_ftp = engine.eval::<bool>(script_ftp);
-     if let Ok(val) = result_ftp {
-         assert_eq!(val, false, "download_file should return false for ftp:// protocol");
-     }
+    if let Ok(val) = result_ftp {
+        assert_eq!(
+            val, false,
+            "download_file should return false for ftp:// protocol"
+        );
+    }
 }
 
 #[test]
 fn test_download_file_safe_path_rejection() {
-     let mut engine = create_engine("content_loader");
+    let mut engine = create_engine("content_loader");
 
-     // Test path traversal
-     let script = r#"
+    // Test path traversal
+    let script = r#"
         download_file("http://example.com", "../test.txt")
     "#;
     let result = engine.eval::<bool>(script);
@@ -52,7 +58,7 @@ fn test_download_file_safe_path_rejection() {
         download_file("http://example.com", "/tmp/test.txt")
     "#;
     let result = engine.eval::<bool>(script);
-     if let Ok(val) = result {
+    if let Ok(val) = result {
         assert_eq!(val, false, "Should reject absolute path");
     }
 }
