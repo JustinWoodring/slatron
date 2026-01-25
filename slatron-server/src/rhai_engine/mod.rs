@@ -1,5 +1,7 @@
 use rhai::{Engine, Scope};
 
+const ALLOWED_COMMANDS: &[&str] = &["yt-dlp", "ffmpeg", "ffprobe"];
+
 pub fn create_engine(script_type: &str) -> Engine {
     let mut engine = Engine::new();
 
@@ -161,6 +163,16 @@ fn register_global_functions(engine: &mut Engine) {
 }
 
 fn run_shell_execute(cmd: String, args: Vec<rhai::Dynamic>) -> rhai::Map {
+    if !ALLOWED_COMMANDS.contains(&cmd.as_str()) {
+        let err_msg = format!("Security Violation: Command '{}' is not in the allowlist.", cmd);
+        tracing::error!("{}", err_msg);
+        let mut map = rhai::Map::new();
+        map.insert("code".into(), (-1 as i64).into());
+        map.insert("stdout".into(), "".into());
+        map.insert("stderr".into(), err_msg.into());
+        return map;
+    }
+
     let mut command = std::process::Command::new(&cmd);
 
     let mut args_str = String::new();
