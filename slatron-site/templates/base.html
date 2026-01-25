@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ config.title }}{% endblock %}</title>
+    <link rel="stylesheet" href="{{ get_url(path="main.css") | safe }}">
+    <link rel="icon" type="image/png" href="{{ get_url(path="logo.png") | safe }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <header>
+        <div class="header-inner">
+            <a href="/" class="logo">
+                <img src="{{ get_url(path="logo.png") | safe }}" alt="Slatron Logo">
+                <span>Slatron</span>
+            </a>
+            <nav>
+                {% for item in config.extra.menu %}
+                    <a href="{{ item.url }}" {% if item.url is starting_with("http") %}target="_blank"{% endif %}>
+                        {{ item.name }}
+                        {% if item.url is starting_with("http") %}
+                            <i data-lucide="external-link" size="14"></i>
+                        {% endif %}
+                    </a>
+                {% endfor %}
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        {% block content %}
+        {% endblock %}
+    </main>
+
+    <footer>
+        <div class="footer-inner">
+            <div class="footer-col">
+                <div class="logo">
+                    <img src="{{ get_url(path="logo.png") | safe }}" alt="Slatron Logo">
+                    <span>Slatron</span>
+                </div>
+                <p>The intelligent TV station manager.</p>
+            </div>
+            <div class="footer-col">
+                <h4>Resources</h4>
+                <a href="/docs">Documentation</a>
+                <a href="https://github.com/JustinWoodring/slatron">GitHub</a>
+                <a href="https://github.com/JustinWoodring/slatron/releases">Releases</a>
+            </div>
+        </div>
+        <div class="copyright">
+            <p>&copy; {{ now() | date(format="%Y") }} {{ config.extra.author }}. Slatron is licensed under AGPLv3.</p>
+        </div>
+    </footer>
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>

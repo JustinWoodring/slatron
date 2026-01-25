@@ -1,0 +1,22 @@
+# The URL the site will be built for
+base_url = "https://slatron.justinwoodring.com"
+title = "Slatron"
+description = "The intelligent TV station manager with adaptive AI hosts."
+
+# Whether to automatically compile all Sass files in the sass directory
+compile_sass = true
+
+# Whether to build a search index to be used later on by a JavaScript library
+build_search_index = false
+
+[markdown.highlighting]
+theme = "dracula"
+
+[extra]
+logo = "/logo.png"
+github = "https://github.com/JustinWoodring/slatron"
+author = "Justin Woodring"
+menu = [
+    { name = "Docs", url = "/docs" },
+    { name = "GitHub", url = "https://github.com/JustinWoodring/slatron" }
+]

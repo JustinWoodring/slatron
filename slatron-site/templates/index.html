@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero">
+    <div class="hero-content">
+        <h1>{{ section.title }}</h1>
+        <p class="subtitle">{{ section.description }}</p>
+        <div class="cta-container">
+            <a href="/docs/getting-started" class="cta-button primary">
+                Get Started
+                <i data-lucide="arrow-right"></i>
+            </a>
+            <a href="https://github.com/JustinWoodring/slatron" class="cta-button secondary">
+                <i data-lucide="github"></i>
+                Star on GitHub
+            </a>
+        </div>
+        
+        <div class="tech-stack">
+            <p>POWERED BY OPEN SOURCE</p>
+            <div class="tech-icons">
+                <span><i data-lucide="cpu"></i> Rust</span>
+                <span><i data-lucide="zap"></i> MPV</span>
+                <span><i data-lucide="database"></i> SQLite</span>
+                <span><i data-lucide="box"></i> Docker</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- CSS Mockup of the Slatron Dashboard -->
+    <div class="hero-graphic">
+        <div class="app-window">
+            <!-- Sidebar -->
+            <div class="app-sidebar">
+                <div class="sidebar-logo">
+                    <img src="/logo.png" alt="Slatron" />
+                </div>
+                
+                <div class="sidebar-user">
+                    <div class="user-avatar">A</div>
+                    <div class="user-info">
+                        <div class="username">admin</div>
+                        <div class="role">ADMIN</div>
+                    </div>
+                </div>
+
+                <div class="sidebar-nav">
+                    <div class="nav-item active">
+                        <i data-lucide="layout-dashboard"></i>
+                        <span>Dashboard</span>
+                    </div>
+                    <div class="nav-item">
+                        <i data-lucide="calendar"></i>
+                        <span>Schedules</span>
+                    </div>
+                    <div class="nav-item">
+                        <i data-lucide="library"></i>
+                        <span>Content</span>
+                    </div>
+                    <div class="nav-item">
+                        <i data-lucide="tv-2"></i>
+                        <span>Nodes</span>
+                    </div>
+                    <div class="nav-item">
+                        <i data-lucide="file-code"></i>
+                        <span>Scripts</span>
+                    </div>
+                    <div class="nav-item">
+                        <i data-lucide="mic-2"></i>
+                        <span>DJs & AI</span>
+                    </div>
+                    <div class="nav-item">
+                        <i data-lucide="layers"></i>
+                        <span>Bumpers</span>
+                    </div>
+                    <div class="nav-item">
+                        <i data-lucide="settings"></i>
+                        <span>Settings</span>
+                    </div>
+                </div>
+
+                <div class="sidebar-footer">
+                    <div class="logout-btn">
+                        <i data-lucide="log-out"></i>
+                        <span>Logout</span>
+                    </div>
+                    <div class="version">Slatron v1.2.0</div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="app-main">
+                <div class="dashboard-content">
+                    <div class="dashboard-header">
+                        <h2 class="gradient-text">Dashboard</h2>
+                        <p>Overview of your broadcast network</p>
+                    </div>
+
+                    <!-- Stats Row -->
+                    <div class="stats-grid">
+                        <div class="stat-card blue">
+                            <div class="stat-info">
+                                <div class="stat-label">Active Schedules</div>
+                                <div class="stat-value">3</div>
+                            </div>
+                            <div class="stat-icon">📅</div>
+                            <div class="stat-glow"></div>
+                        </div>
+                        <div class="stat-card purple">
+                            <div class="stat-info">
+                                <div class="stat-label">Content Items</div>
+                                <div class="stat-value">1,248</div>
+                            </div>
+                            <div class="stat-icon">🎬</div>
+                            <div class="stat-glow"></div>
+                        </div>
+                        <div class="stat-card green">
+                            <div class="stat-info">
+                                <div class="stat-label">Nodes Online</div>
+                                <div class="stat-value">4</div>
+                            </div>
+                            <div class="stat-icon">🟢</div>
+                            <div class="stat-glow"></div>
+                        </div>
+                    </div>
+
+                    <!-- Live Monitor -->
+                    <div class="section-header">
+                        <h3>
+                            <span class="live-indicator"></span>
+                            Live Network Monitor
+                        </h3>
+                        <span class="badge">REAL-TIME TELEMETRY</span>
+                    </div>
+
+                    <div class="live-grid">
+                        <div class="node-card">
+                            <div class="node-header">
+                                <span class="node-name">Lobby TV</span>
+                                <span class="status online">ONLINE</span>
+                            </div>
+                            <div class="node-screen">
+                                <div class="screen-content" style="background: linear-gradient(45deg, #ff00cc, #333399);"></div>
+                                <div class="screen-overlay">
+                                    <i data-lucide="music-2"></i>
+                                    <span>Now Playing</span>
+                                </div>
+                            </div>
+                            <div class="node-details">
+                                <div class="detail-row">
+                                    <i data-lucide="clock"></i>
+                                    <span>02:14 / 03:45</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="node-card">
+                            <div class="node-header">
+                                <span class="node-name">Cafeteria</span>
+                                <span class="status online">ONLINE</span>
+                            </div>
+                            <div class="node-screen">
+                                <div class="screen-content" style="background: linear-gradient(135deg, #111, #222);">
+                                    <div class="screensaver">
+                                        <div class="dvd-logo">SLATRON</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="node-details">
+                                <div class="detail-row">
+                                    <i data-lucide="moon"></i>
+                                    <span>Idle</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="features">
+    <div class="feature-card span-2">
+        <div class="icon-box"><i data-lucide="mic-2"></i></div>
+        <h3>Adaptive AI DJs</h3>
+        <p>Create diverse AI personalities to host your station. Supports Google Gemini, Anthropic Claude, OpenAI, and local Ollama models. They speak, react to context, and manage the vibe.</p>
+    </div>
+    <div class="feature-card">
+        <div class="icon-box"><i data-lucide="palette"></i></div>
+        <h3>Dynamic Branding</h3>
+        <p>Professional station idents, transitions, and lower thirds using MLT templates with real-time variable substitution.</p>
+    </div>
+    <div class="feature-card">
+        <div class="icon-box"><i data-lucide="network"></i></div>
+        <h3>Distributed Playback</h3>
+        <p>Manage multiple playback nodes from a centralized server. Nodes cache content locally for resilient offline playback.</p>
+    </div>
+    <div class="feature-card span-2">
+        <div class="icon-box"><i data-lucide="code-2"></i></div>
+        <h3>Scriptable Engine</h3>
+        <p>Use Rhai scripts for dynamic content loading, custom playback logic, and automated bumper injection. If you can code it, Slatron can broadcast it.</p>
+    </div>
+    <div class="feature-card">
+        <div class="icon-box"><i data-lucide="calendar-clock"></i></div>
+        <h3>Smart Scheduling</h3>
+        <p>Drag-and-drop schedule grid with layered priorities, interrupt scheduling, and time-based blocks.</p>
+    </div>
+    <div class="feature-card">
+        <div class="icon-box"><i data-lucide="lock"></i></div>
+        <h3>Role-Based Access</h3>
+        <p>Secure your station management with granular Admin, Editor, and Viewer roles for different team members.</p>
+    </div>
+</section>
+
+<!-- Use Cases Section -->
+<section class="use-cases">
+    <div class="section-heading">
+        <h2>Perfect For Every Screen</h2>
+        <p>From personal projects to professional deployments, Slatron scales with you.</p>
+    </div>
+    <div class="cases-grid">
+        <div class="case-card">
+            <div class="case-image home-lab">
+                <i data-lucide="server"></i>
+            </div>
+            <h3>Home Labbers</h3>
+            <p>Run your own internal TV station. Curate playlists from your NAS, YouTube, and more for a personalized broadcast experience.</p>
+        </div>
+        <div class="case-card">
+            <div class="case-image retail">
+                <i data-lucide="store"></i>
+            </div>
+            <h3>Retail & Signage</h3>
+            <p>Power in-store displays with scheduled promotions, music, and AI announcements. Manage hundreds of screens from one dashboard.</p>
+        </div>
+        <div class="case-card">
+            <div class="case-image education">
+                <i data-lucide="graduation-cap"></i>
+            </div>
+            <h3>Schools & Campus</h3>
+            <p>Keep students informed with morning announcements, weather updates, and event schedules played across campus displays.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Testimonials / Community -->
+<section class="testimonials">
+    <div class="section-heading">
+        <h2>Loved by the Community</h2>
+        <p>See what people are building with Slatron.</p>
+    </div>
+    <div class="testimonials-grid">
+        <div class="testimonial-card">
+            <div class="quote-icon"><i data-lucide="quote"></i></div>
+            <p>"I replaced my Plex random shuffle with Slatron and it feels like I have a real TV channel now. The AI DJ adds so much personality!"</p>
+            <div class="author">
+                <div class="avatar">D</div>
+                <div class="info">
+                    <span class="name">Devin R.</span>
+                    <span class="title">Home Automation Enthusiast</span>
+                </div>
+            </div>
+        </div>
+        <div class="testimonial-card">
+            <div class="quote-icon"><i data-lucide="quote"></i></div>
+            <p>"Finally, a digital signage solution that doesn't cost a fortune per screen. We use it for our lobby and breakroom TVs."</p>
+            <div class="author">
+                <div class="avatar">S</div>
+                <div class="info">
+                    <span class="name">Sarah K.</span>
+                    <span class="title">IT Manager</span>
+                </div>
+            </div>
+        </div>
+        <div class="testimonial-card">
+            <div class="quote-icon"><i data-lucide="quote"></i></div>
+            <p>"The scripting engine is insane. I wrote a script to inject breaking news bumpers whenever our RSS feed updates. Game changer."</p>
+            <div class="author">
+                <div class="avatar">M</div>
+                <div class="info">
+                    <span class="name">Marcus T.</span>
+                    <span class="title">Software Engineer</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- FAQ Section -->
+<section class="faq">
+    <div class="section-heading">
+        <h2>Frequently Asked Questions</h2>
+    </div>
+    <div class="faq-grid">
+        <div class="faq-item">
+            <h4>Is Slatron free?</h4>
+            <p>Yes! Slatron is open-source software licensed under the AGPLv3. You can host it yourself for free.</p>
+        </div>
+        <div class="faq-item">
+            <h4>What hardware do I need?</h4>
+            <p>The server runs on anything that supports Rust (Linux, macOS, Windows). Playback nodes run on lightweight hardware like Raspberry Pis or Mini PCs.</p>
+        </div>
+        <div class="faq-item">
+            <h4>Can I use local LLMs?</h4>
+            <p>Absolutely. Slatron supports Ollama and local Orpheus TTS, so you can run a completely offline, privacy-focused station.</p>
+        </div>
+        <div class="faq-item">
+            <h4>Does it work with YouTube?</h4>
+            <p>Yes, Slatron uses <code>yt-dlp</code> under the hood, allowing you to add individual videos or entire playlists directly to your library.</p>
+        </div>
+    </div>
+</section>
+
+<!-- Bottom CTA -->
+<section class="bottom-cta">
+    <div class="cta-content">
+        <h2>Ready to start broadcasting?</h2>
+        <p>Join the revolution of intelligent, programmable media.</p>
+        <div class="cta-buttons">
+            <a href="/docs/getting-started" class="cta-button primary large">
+                Install Slatron Now
+                <i data-lucide="terminal"></i>
+            </a>
+            <a href="https://github.com/JustinWoodring/slatron" class="cta-button secondary large">
+                <i data-lucide="star"></i>
+                Star on GitHub
+            </a>
+        </div>
+    </div>
+</section>
+
+<div class="content">
+    {{ section.content | safe }}
+</div>
+{% endblock content %}
