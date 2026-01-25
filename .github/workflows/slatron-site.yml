@@ -1,0 +1,27 @@
+on:
+  push:
+    branches:
+    - main
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Zola Build
+        run: | 
+          sudo snap install --edge zola
+          zola build
+      - name: Deploy
+        env: 
+          JUSTINWOODRING_WEBSITE_SSH_KEY: ${{ secrets.JUSTINWOODRING_USER_SSH_KEY }}
+        run: |
+          mkdir keys
+          cd keys
+          echo "$JUSTINWOODRING_WEBSITE_SSH_KEY" > justinwoodring_website_ssh_key
+          chmod 600 justinwoodring_website_ssh_key
+          mkdir ~/.ssh
+          ssh-keyscan -t rsa justinwoodring.com >> ~/.ssh/known_hosts
+          cd ..
+          ssh -i ./keys/justinwoodring_website_ssh_key justinwoodring@justinwoodring.com 'bash < /home/justinwoodring/redeploy_slatron_site.sh'
+          scp -i ./keys/justinwoodring_website_ssh_key -r public justinwoodring@justinwoodring.com:public/slatron_site
+          echo "All Done"
