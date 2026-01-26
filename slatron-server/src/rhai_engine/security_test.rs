@@ -56,3 +56,21 @@ fn test_download_file_safe_path_rejection() {
         assert_eq!(val, false, "Should reject absolute path");
     }
 }
+
+#[test]
+fn test_shell_execute_arbitrary_command() {
+    let mut engine = create_engine("content_loader");
+
+    // Try to execute a simple command that should succeed currently but be blocked later
+    // We use 'echo' which is standard.
+    let script = r#"
+        let result = shell_execute("echo", ["vulnerable"]);
+        result.code
+    "#;
+
+    let result = engine.eval::<i64>(script);
+
+    // Currently (FIXED), this should return -1 (blocked)
+    assert!(result.is_ok(), "Script execution failed");
+    assert_eq!(result.unwrap(), -1, "Arbitrary command execution succeeded (should be blocked)");
+}
