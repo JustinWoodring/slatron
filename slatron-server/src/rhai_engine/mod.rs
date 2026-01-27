@@ -161,6 +161,23 @@ fn register_global_functions(engine: &mut Engine) {
 }
 
 fn run_shell_execute(cmd: String, args: Vec<rhai::Dynamic>) -> rhai::Map {
+    const ALLOWED_COMMANDS: &[&str] = &["yt-dlp", "ffmpeg", "ffprobe"];
+
+    if !ALLOWED_COMMANDS.contains(&cmd.as_str()) {
+        tracing::error!(
+            "Security Alert: Script attempted to execute disallowed command: {}",
+            cmd
+        );
+        let mut map = rhai::Map::new();
+        map.insert("code".into(), (-1 as i64).into());
+        map.insert("stdout".into(), "".into());
+        map.insert(
+            "stderr".into(),
+            format!("Security Error: Command '{}' is not allowed.", cmd).into(),
+        );
+        return map;
+    }
+
     let mut command = std::process::Command::new(&cmd);
 
     let mut args_str = String::new();
