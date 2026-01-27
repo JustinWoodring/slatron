@@ -56,3 +56,29 @@ fn test_download_file_safe_path_rejection() {
         assert_eq!(val, false, "Should reject absolute path");
     }
 }
+
+#[test]
+fn test_shell_execute_disallowed_command() {
+    let mut engine = create_engine("content_loader");
+
+    // Attempt to run 'ls' which should be disallowed
+    let script = r#"
+        let result = shell_execute("ls", ["-la"]);
+        result
+    "#;
+
+    let result = engine.eval::<rhai::Map>(script);
+
+    match result {
+        Ok(map) => {
+            // Check code is -1
+            let code = map.get("code").expect("Result map should have 'code'").as_int().expect("Code should be int");
+            assert_eq!(code, -1, "Disallowed command should return code -1");
+
+            // Check stderr contains error message
+            let stderr = map.get("stderr").expect("Result map should have 'stderr'").clone().into_string().expect("Stderr should be string");
+            assert!(stderr.contains("not allowed"), "Stderr should contain 'not allowed'");
+        },
+        Err(e) => panic!("Script execution failed: {}", e),
+    }
+}
