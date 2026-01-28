@@ -161,6 +161,18 @@ fn register_global_functions(engine: &mut Engine) {
 }
 
 fn run_shell_execute(cmd: String, args: Vec<rhai::Dynamic>) -> rhai::Map {
+    // Security: Only allow specific commands to be executed
+    let allowed_commands = ["yt-dlp", "ffmpeg", "ffprobe"];
+    if !allowed_commands.contains(&cmd.as_str()) {
+        let err_msg = format!("Security Error: Command '{}' is not allowed.", cmd);
+        tracing::error!("{}", err_msg);
+        let mut map = rhai::Map::new();
+        map.insert("code".into(), (-1 as i64).into());
+        map.insert("stdout".into(), "".into());
+        map.insert("stderr".into(), err_msg.into());
+        return map;
+    }
+
     let mut command = std::process::Command::new(&cmd);
 
     let mut args_str = String::new();
