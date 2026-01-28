@@ -2,7 +2,7 @@ use crate::rhai_engine::create_engine;
 
 #[test]
 fn test_download_file_unsafe_protocol() {
-    let mut engine = create_engine("content_loader");
+    let engine = create_engine("content_loader");
 
     // We can't easily capture the return value or log output of download_file
     // without executing it via the engine and mocking everything,
@@ -36,7 +36,7 @@ fn test_download_file_unsafe_protocol() {
 
 #[test]
 fn test_download_file_safe_path_rejection() {
-     let mut engine = create_engine("content_loader");
+     let engine = create_engine("content_loader");
 
      // Test path traversal
      let script = r#"
@@ -54,5 +54,58 @@ fn test_download_file_safe_path_rejection() {
     let result = engine.eval::<bool>(script);
      if let Ok(val) = result {
         assert_eq!(val, false, "Should reject absolute path");
+    }
+}
+
+#[test]
+fn test_shell_execute_arbitrary_command_vulnerability() {
+    let engine = create_engine("content_loader");
+
+    // Attempt to run 'echo' which is currently allowed but should be blocked
+    // using 'ls' to list files is also a good check
+
+    let script = r#"
+        let res = shell_execute("echo", ["VULNERABLE"]);
+        res
+    "#;
+
+    let result = engine.eval::<rhai::Map>(script);
+
+    match result {
+        Ok(res) => {
+            // EXPECTED BEHAVIOR: It fails with code -1 and security error
+            let code = res.get("code").expect("code").as_int().unwrap_or(0);
+            let stderr = res.get("stderr").expect("stderr").to_string();
+
+            assert_eq!(code, -1, "Command execution should have failed with code -1");
+            assert!(stderr.contains("Security Error"), "Stderr should contain security error, got: {}", stderr);
+            assert!(stderr.contains("not allowed"), "Stderr should mention command not allowed");
+        },
+        Err(e) => panic!("Script execution error: {}", e),
+    }
+}
+
+#[test]
+fn test_shell_execute_allowed_command() {
+    let engine = create_engine("content_loader");
+
+    // yt-dlp is in the allowlist.
+    let script = r#"
+        let res = shell_execute("yt-dlp", ["--version"]);
+        res
+    "#;
+
+    let result = engine.eval::<rhai::Map>(script);
+
+    match result {
+        Ok(res) => {
+            let stderr = res.get("stderr").expect("stderr").to_string();
+            // It should NOT be a security error.
+            if stderr.contains("Security Error") {
+                panic!("Allowed command 'yt-dlp' was blocked!");
+            }
+            // It might fail if yt-dlp is missing, but that's fine.
+        },
+        Err(e) => panic!("Script execution error: {}", e),
     }
 }
