@@ -7,3 +7,8 @@
 **Vulnerability:** The `download_file` function exposed to Rhai scripts in both `slatron-server` and `slatron-node` used `curl` without validating the URL protocol.
 **Learning:** Tools like `curl` support many protocols (`file://`, `ftp://`, etc.) which can be abused for SSRF or LFI if user input is passed directly to them. Simply relying on "it downloads stuff" hides the complexity of the underlying tool's capabilities.
 **Prevention:** Always whitelist allowed protocols (e.g., `http://`, `https://`) when using generic download tools or libraries, especially when input comes from a scriptable environment.
+
+## 2025-05-24 - [Rhai Script RCE Mitigation]
+**Vulnerability:** As identified in the 2025-05-23 finding, `shell_execute` allowed arbitrary commands.
+**Learning:** Even "trusted" script editors shouldn't have root-equivalent access to the underlying OS. Restricting to a functional allowlist (`yt-dlp`, `ffmpeg`, `ffprobe`) balances functionality with security.
+**Prevention:** Explicit allowlists are superior to blacklists or "trust". The fix validates the command against a hardcoded array before execution.

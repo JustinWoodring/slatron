@@ -2,7 +2,7 @@ use crate::rhai_engine::create_engine;
 
 #[test]
 fn test_download_file_unsafe_protocol() {
-    let mut engine = create_engine("content_loader");
+    let engine = create_engine("content_loader");
 
     // We can't easily capture the return value or log output of download_file
     // without executing it via the engine and mocking everything,
@@ -36,7 +36,7 @@ fn test_download_file_unsafe_protocol() {
 
 #[test]
 fn test_download_file_safe_path_rejection() {
-     let mut engine = create_engine("content_loader");
+     let engine = create_engine("content_loader");
 
      // Test path traversal
      let script = r#"
@@ -54,5 +54,44 @@ fn test_download_file_safe_path_rejection() {
     let result = engine.eval::<bool>(script);
      if let Ok(val) = result {
         assert_eq!(val, false, "Should reject absolute path");
+    }
+}
+
+#[test]
+fn test_shell_execute_allowlist() {
+    let engine = create_engine("content_loader");
+
+    // Test disallowed command
+    let script_disallowed = r#"
+        let result = shell_execute("ls", ["-la"]);
+        result
+    "#;
+    let result = engine.eval::<rhai::Map>(script_disallowed);
+    if let Ok(map) = result {
+        // rhai::Map values are Dynamic, need cast/to_string
+        // In Rhai, Map keys are smart strings.
+        let stderr = map.get("stderr").expect("stderr field missing").to_string();
+        assert!(stderr.contains("Security Error: Command 'ls' not allowed"), "Should reject disallowed command 'ls'. Got: {}", stderr);
+
+        let code = map.get("code").expect("code field missing").as_int().expect("code not int");
+        assert_eq!(code, -1);
+    } else {
+        panic!("Script execution failed for disallowed command");
+    }
+
+    // Test allowed command (yt-dlp)
+    // Note: yt-dlp might not exist, but we check that it doesn't return the Security Error
+    let script_allowed = r#"
+        let result = shell_execute("yt-dlp", ["--version"]);
+        result
+    "#;
+    let result = engine.eval::<rhai::Map>(script_allowed);
+    if let Ok(map) = result {
+        let stderr = map.get("stderr").expect("stderr field missing").to_string();
+        // It should NOT be the security error.
+        assert!(!stderr.contains("Security Error: Command 'yt-dlp' not allowed"), "Should allow command 'yt-dlp'");
+        // If it fails execution (e.g. not found), that's expected in this env, but it proves it passed the allowlist check.
+    } else {
+        panic!("Script execution failed for allowed command");
     }
 }
