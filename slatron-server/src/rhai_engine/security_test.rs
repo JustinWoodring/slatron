@@ -56,3 +56,33 @@ fn test_download_file_safe_path_rejection() {
         assert_eq!(val, false, "Should reject absolute path");
     }
 }
+
+#[test]
+fn test_shell_execute_arbitrary_command_blocked() {
+    let mut engine = create_engine("content_loader");
+
+    // Try to execute 'whoami' which is NOT in the allowed list
+    let script = r#"
+        let result = shell_execute("whoami");
+        result.code
+    "#;
+
+    let result = engine.eval::<i64>(script);
+    assert!(result.is_ok());
+    // It should return -1 now because it's blocked
+    assert_eq!(result.unwrap(), -1, "Arbitrary command should be blocked and return code -1");
+}
+
+#[test]
+fn test_download_file_argument_injection_blocked() {
+    let mut engine = create_engine("content_loader");
+
+    // Try argument injection
+    let script = r#"
+        download_file("-o/etc/passwd", "test.txt")
+    "#;
+
+    let result = engine.eval::<bool>(script);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), false, "Argument injection should be blocked");
+}

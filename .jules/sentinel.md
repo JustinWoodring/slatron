@@ -7,3 +7,13 @@
 **Vulnerability:** The `download_file` function exposed to Rhai scripts in both `slatron-server` and `slatron-node` used `curl` without validating the URL protocol.
 **Learning:** Tools like `curl` support many protocols (`file://`, `ftp://`, etc.) which can be abused for SSRF or LFI if user input is passed directly to them. Simply relying on "it downloads stuff" hides the complexity of the underlying tool's capabilities.
 **Prevention:** Always whitelist allowed protocols (e.g., `http://`, `https://`) when using generic download tools or libraries, especially when input comes from a scriptable environment.
+
+## 2025-10-26 - [Argument Injection in Shell Command Wrappers]
+**Vulnerability:** The `download_file` function constructed a `curl` command by passing the user-supplied URL directly as an argument. A URL starting with `-` could be interpreted as a flag (e.g., `-o/etc/passwd`).
+**Learning:** Even when avoiding `sh -c` and using `Command::new()`, argument injection is possible if the underlying program parses arguments flexibly (like `curl` or `tar`).
+**Prevention:** Validate inputs that are passed as arguments to external commands to ensure they don't look like flags (e.g., start with `-`), or use `--` delimiter if supported by the tool.
+
+## 2025-10-26 - [Restricting Scriptable Shell Execution]
+**Vulnerability:** `shell_execute` allowed arbitrary command execution.
+**Learning:** "Trusted users" is a weak defense for RCE. Allowing arbitrary execution makes the application a foothold for attackers.
+**Prevention:** Implemented an allowlist (`yt-dlp`, `ffmpeg`, `ffprobe`) to restrict the attack surface while maintaining functionality.
