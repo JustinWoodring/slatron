@@ -2,7 +2,7 @@ use crate::rhai_engine::create_engine;
 
 #[test]
 fn test_download_file_unsafe_protocol() {
-    let mut engine = create_engine("content_loader");
+    let engine = create_engine("content_loader");
 
     // We can't easily capture the return value or log output of download_file
     // without executing it via the engine and mocking everything,
@@ -36,7 +36,7 @@ fn test_download_file_unsafe_protocol() {
 
 #[test]
 fn test_download_file_safe_path_rejection() {
-     let mut engine = create_engine("content_loader");
+     let engine = create_engine("content_loader");
 
      // Test path traversal
      let script = r#"
@@ -54,5 +54,48 @@ fn test_download_file_safe_path_rejection() {
     let result = engine.eval::<bool>(script);
      if let Ok(val) = result {
         assert_eq!(val, false, "Should reject absolute path");
+    }
+}
+
+#[test]
+fn test_shell_execute_blocked() {
+    let engine = create_engine("content_loader");
+
+    // Attempt to run ls
+    let script = r#"
+        let res = shell_execute("ls", ["-la"]);
+        res.stderr
+    "#;
+
+    let result = engine.eval::<String>(script);
+    if let Ok(stderr) = result {
+        assert!(
+            stderr.contains("Security Error: Command not allowed"),
+            "Should block unauthorized command"
+        );
+    } else {
+        panic!("Script failed to run");
+    }
+}
+
+#[test]
+fn test_shell_execute_allowed() {
+    let engine = create_engine("content_loader");
+
+    // Attempt to run yt-dlp.
+    // We expect it NOT to be blocked. It might fail if not installed, but stderr shouldn't be "Security Error..."
+    let script = r#"
+        let res = shell_execute("yt-dlp", ["--version"]);
+        res.stderr
+    "#;
+
+    let result = engine.eval::<String>(script);
+    if let Ok(stderr) = result {
+        assert!(
+            !stderr.contains("Security Error: Command not allowed"),
+            "Should allow authorized command"
+        );
+    } else {
+        // If script failed to run, it might be due to other reasons, but let's hope it runs.
     }
 }

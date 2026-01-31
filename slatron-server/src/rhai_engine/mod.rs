@@ -160,7 +160,22 @@ fn register_global_functions(engine: &mut Engine) {
     });
 }
 
+const ALLOWED_COMMANDS: &[&str] = &["yt-dlp", "ffmpeg", "ffprobe"];
+
 fn run_shell_execute(cmd: String, args: Vec<rhai::Dynamic>) -> rhai::Map {
+    if !ALLOWED_COMMANDS.contains(&cmd.as_str()) {
+        let err_msg = "Security Error: Command not allowed";
+        tracing::error!(
+            "Shell Security Alert: Attempted to run disallowed command: {}",
+            cmd
+        );
+        let mut map = rhai::Map::new();
+        map.insert("code".into(), (-1 as i64).into());
+        map.insert("stdout".into(), "".into());
+        map.insert("stderr".into(), err_msg.into());
+        return map;
+    }
+
     let mut command = std::process::Command::new(&cmd);
 
     let mut args_str = String::new();
