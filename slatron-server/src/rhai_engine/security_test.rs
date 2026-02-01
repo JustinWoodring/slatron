@@ -2,7 +2,7 @@ use crate::rhai_engine::create_engine;
 
 #[test]
 fn test_download_file_unsafe_protocol() {
-    let mut engine = create_engine("content_loader");
+    let engine = create_engine("content_loader");
 
     // We can't easily capture the return value or log output of download_file
     // without executing it via the engine and mocking everything,
@@ -18,10 +18,13 @@ fn test_download_file_unsafe_protocol() {
     // It might panic if eval fails, but here we expect it to return false.
     // If it fails to compile/run, unwrapping will panic, which is also a test failure.
     if let Ok(val) = result {
-         assert_eq!(val, false, "download_file should return false for file:// protocol");
+        assert_eq!(
+            val, false,
+            "download_file should return false for file:// protocol"
+        );
     } else {
-         // If eval failed, it might be due to other reasons, but let's assume valid rhai syntax
-         // If `download_file` throws exception, that's also fine as rejection.
+        // If eval failed, it might be due to other reasons, but let's assume valid rhai syntax
+        // If `download_file` throws exception, that's also fine as rejection.
     }
 
     // Also check that it returns false for other protocols
@@ -29,17 +32,20 @@ fn test_download_file_unsafe_protocol() {
         download_file("ftp://example.com/foo", "test_output.txt")
     "#;
     let result_ftp = engine.eval::<bool>(script_ftp);
-     if let Ok(val) = result_ftp {
-         assert_eq!(val, false, "download_file should return false for ftp:// protocol");
-     }
+    if let Ok(val) = result_ftp {
+        assert_eq!(
+            val, false,
+            "download_file should return false for ftp:// protocol"
+        );
+    }
 }
 
 #[test]
 fn test_download_file_safe_path_rejection() {
-     let mut engine = create_engine("content_loader");
+    let engine = create_engine("content_loader");
 
-     // Test path traversal
-     let script = r#"
+    // Test path traversal
+    let script = r#"
         download_file("http://example.com", "../test.txt")
     "#;
     let result = engine.eval::<bool>(script);
@@ -52,7 +58,77 @@ fn test_download_file_safe_path_rejection() {
         download_file("http://example.com", "/tmp/test.txt")
     "#;
     let result = engine.eval::<bool>(script);
-     if let Ok(val) = result {
+    if let Ok(val) = result {
         assert_eq!(val, false, "Should reject absolute path");
+    }
+}
+
+#[test]
+fn test_shell_execute_arbitrary_command() {
+    let engine = create_engine("content_loader");
+
+    // Attempt to execute an arbitrary command (e.g. echo)
+    // We expect this to fail (return code -1 or error) after our fix.
+
+    let script = r#"
+        let res = shell_execute("echo", ["RCE Test"]);
+        res.stderr
+    "#;
+
+    let result = engine.eval::<String>(script);
+
+    // Verify that the command was blocked
+    if let Ok(stderr) = result {
+        assert!(
+            stderr.contains("Security Error"),
+            "Arbitrary command 'echo' should be blocked with Security Error"
+        );
+    } else {
+        // If it failed to eval, that's unexpected for a valid script
+        panic!("Script failed to evaluate");
+    }
+}
+
+#[test]
+fn test_shell_execute_allowed_command() {
+    let engine = create_engine("content_loader");
+
+    // yt-dlp is allowed.
+    // It might fail to run if not installed, but it shouldn't be blocked by security check.
+
+    let script = r#"
+        let res = shell_execute("yt-dlp", ["--version"]);
+        res.stderr
+    "#;
+
+    let result = engine.eval::<String>(script);
+
+    if let Ok(stderr) = result {
+        assert!(
+            !stderr.contains("Security Error"),
+            "yt-dlp should be allowed (got Security Error)"
+        );
+    }
+}
+
+#[test]
+fn test_shell_execute_ytdlp_exec_blocked() {
+    let engine = create_engine("content_loader");
+
+    // yt-dlp --exec is dangerous and should be blocked
+    let script = r#"
+        let res = shell_execute("yt-dlp", ["--exec", "echo RCE", "https://example.com"]);
+        res.stderr
+    "#;
+
+    let result = engine.eval::<String>(script);
+
+    if let Ok(stderr) = result {
+        assert!(
+            stderr.contains("Security Error"),
+            "yt-dlp --exec should be blocked"
+        );
+    } else {
+        panic!("Script failed to evaluate");
     }
 }

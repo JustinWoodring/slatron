@@ -1,7 +1,7 @@
+mod anthropic_adapter;
+mod gemini_adapter;
 mod ollama_adapter;
 mod openai_adapter;
-mod gemini_adapter;
-mod anthropic_adapter;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -9,10 +9,10 @@ use reqwest::Client;
 
 use crate::models::AiProvider;
 
+pub use anthropic_adapter::AnthropicAdapter;
+pub use gemini_adapter::GeminiLlmAdapter;
 pub use ollama_adapter::OllamaAdapter;
 pub use openai_adapter::OpenAiAdapter;
-pub use gemini_adapter::GeminiLlmAdapter;
-pub use anthropic_adapter::AnthropicAdapter;
 
 /// Trait for LLM provider implementations
 #[async_trait]

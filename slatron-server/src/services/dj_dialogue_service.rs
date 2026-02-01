@@ -257,7 +257,11 @@ Example JSON:
         let mut current_prompt = prompt.to_string();
 
         for attempt in 1..=max_attempts {
-            tracing::info!("Generating DJ Dialogue (Attempt {}/{})", attempt, max_attempts);
+            tracing::info!(
+                "Generating DJ Dialogue (Attempt {}/{})",
+                attempt,
+                max_attempts
+            );
 
             let json_str = match self
                 .ai_service
