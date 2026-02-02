@@ -160,19 +160,57 @@ fn register_global_functions(engine: &mut Engine) {
     });
 }
 
+fn is_command_allowed(cmd: &str) -> bool {
+    let allowed = ["yt-dlp", "ffmpeg", "ffprobe"];
+    allowed.contains(&cmd)
+}
+
+fn are_args_allowed(cmd: &str, args: &[String]) -> bool {
+    if cmd == "yt-dlp" {
+        for arg in args {
+            if arg.starts_with("--exec") {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn run_shell_execute(cmd: String, args: Vec<rhai::Dynamic>) -> rhai::Map {
+    let mut map = rhai::Map::new();
+
+    // Security Check: Allowlist
+    if !is_command_allowed(&cmd) {
+        let err_msg = format!("Security Alert: Command not allowed: {}", cmd);
+        tracing::error!("{}", err_msg);
+        map.insert("code".into(), (-1 as i64).into());
+        map.insert("stdout".into(), "".into());
+        map.insert("stderr".into(), err_msg.into());
+        return map;
+    }
+
     let mut command = std::process::Command::new(&cmd);
+    let mut string_args = Vec::new();
 
     let mut args_str = String::new();
     for arg in args {
         let s = arg.to_string();
+        string_args.push(s.clone());
         args_str.push_str(&format!("{} ", s));
         command.arg(s);
     }
 
-    tracing::info!("Executing Shell: {} {}", cmd, args_str);
+    // Security Check: Arguments
+    if !are_args_allowed(&cmd, &string_args) {
+        let err_msg = format!("Security Alert: Illegal arguments for command {}: {}", cmd, args_str);
+        tracing::error!("{}", err_msg);
+        map.insert("code".into(), (-1 as i64).into());
+        map.insert("stdout".into(), "".into());
+        map.insert("stderr".into(), err_msg.into());
+        return map;
+    }
 
-    let mut map = rhai::Map::new();
+    tracing::info!("Executing Shell: {} {}", cmd, args_str);
 
     match command.output() {
         Ok(output) => {

@@ -1,4 +1,5 @@
 use crate::rhai_engine::create_engine;
+use rhai::Map;
 
 #[test]
 fn test_download_file_unsafe_protocol() {
@@ -54,5 +55,53 @@ fn test_download_file_safe_path_rejection() {
     let result = engine.eval::<bool>(script);
      if let Ok(val) = result {
         assert_eq!(val, false, "Should reject absolute path");
+    }
+}
+
+#[test]
+fn test_arbitrary_shell_execution_blocked() {
+    let mut engine = create_engine("content_loader");
+
+    // Try to execute 'echo' which should be blocked
+    let script = r#"
+        shell_execute("echo", ["VULNERABLE"])
+    "#;
+
+    let result = engine.eval::<Map>(script);
+
+    match result {
+        Ok(map) => {
+            let stderr = map.get("stderr").unwrap().to_string();
+            if !stderr.contains("Security Alert: Command not allowed") {
+                 panic!("FAILURE: Command was NOT blocked as expected. Stderr: {}", stderr);
+            }
+        },
+        Err(e) => {
+            panic!("Execution failed unexpectedly: {}", e);
+        }
+    }
+}
+
+#[test]
+fn test_ytdlp_exec_blocked() {
+    let mut engine = create_engine("content_loader");
+
+    // Try to execute yt-dlp with --exec
+    let script = r#"
+        shell_execute("yt-dlp", ["--exec", "echo FAIL", "http://example.com"])
+    "#;
+
+    let result = engine.eval::<Map>(script);
+
+     match result {
+        Ok(map) => {
+            let stderr = map.get("stderr").unwrap().to_string();
+            if !stderr.contains("Security Alert: Illegal arguments") {
+                 panic!("FAILURE: Dangerous argument was NOT blocked. Stderr: {}", stderr);
+            }
+        },
+        Err(e) => {
+            panic!("Execution failed unexpectedly: {}", e);
+        }
     }
 }
