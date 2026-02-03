@@ -56,3 +56,49 @@ fn test_download_file_safe_path_rejection() {
         assert_eq!(val, false, "Should reject absolute path");
     }
 }
+
+#[test]
+fn test_shell_execute_blocked_command() {
+    let engine = create_engine("content_loader");
+
+    // Attempt to run 'ls' which should be blocked
+    let script = r#"
+        let result = shell_execute("ls", ["-la"]);
+        result
+    "#;
+
+    let result = engine.eval::<rhai::Map>(script);
+    if let Ok(map) = result {
+        let stderr = map.get("stderr").expect("Should have stderr").clone().into_string().unwrap_or_default();
+        let code = map.get("code").expect("Should have code").as_int().unwrap_or(0);
+
+        // This test is expected to fail initially (showing the vulnerability)
+        // because ls will run successfully (code 0) and stderr will be empty.
+        assert!(code != 0, "Blocked command should not return success code 0. Got code: {}", code);
+        assert!(stderr.contains("Security Alert"), "Stderr should contain 'Security Alert'. Got: {}", stderr);
+    } else {
+        panic!("Script execution failed");
+    }
+}
+
+#[test]
+fn test_shell_execute_yt_dlp_exec_blocked() {
+    let engine = create_engine("content_loader");
+
+    // Attempt to use --exec
+    let script = r#"
+        let result = shell_execute("yt-dlp", ["--exec", "touch /tmp/pwned"]);
+        result
+    "#;
+
+    let result = engine.eval::<rhai::Map>(script);
+    if let Ok(map) = result {
+        let stderr = map.get("stderr").expect("Should have stderr").clone().into_string().unwrap_or_default();
+        let code = map.get("code").expect("Should have code").as_int().unwrap_or(0);
+
+        assert!(code != 0, "Blocked arg should not return success code 0. Got code: {}", code);
+        assert!(stderr.contains("Security Alert"), "Stderr should contain 'Security Alert'. Got: {}", stderr);
+    } else {
+        panic!("Script execution failed");
+    }
+}

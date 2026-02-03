@@ -160,7 +160,39 @@ fn register_global_functions(engine: &mut Engine) {
     });
 }
 
+const ALLOWED_COMMANDS: &[&str] = &["yt-dlp", "ffmpeg", "ffprobe"];
+
 fn run_shell_execute(cmd: String, args: Vec<rhai::Dynamic>) -> rhai::Map {
+    // Security Check: Allowlist
+    if !ALLOWED_COMMANDS.contains(&cmd.as_str()) {
+        let err_msg = format!("Security Alert: Command '{}' is not in the allowlist.", cmd);
+        tracing::error!("{}", err_msg);
+        let mut map = rhai::Map::new();
+        map.insert("code".into(), (-1 as i64).into());
+        map.insert("stdout".into(), "".into());
+        map.insert("stderr".into(), err_msg.into());
+        return map;
+    }
+
+    // Security Check: Block dangerous args for specific commands
+    if cmd == "yt-dlp" {
+        for arg in &args {
+            let s = arg.to_string();
+            if s.starts_with("--exec") {
+                let err_msg = format!(
+                    "Security Alert: Argument '{}' is blocked for command '{}'.",
+                    s, cmd
+                );
+                tracing::error!("{}", err_msg);
+                let mut map = rhai::Map::new();
+                map.insert("code".into(), (-1 as i64).into());
+                map.insert("stdout".into(), "".into());
+                map.insert("stderr".into(), err_msg.into());
+                return map;
+            }
+        }
+    }
+
     let mut command = std::process::Command::new(&cmd);
 
     let mut args_str = String::new();
