@@ -16,11 +16,11 @@ pub fn create_engine(
             register_content_loader_functions(&mut engine);
         }
         "overlay" => {
-             if let Some(mpv) = mpv {
-                 register_overlay_functions(&mut engine, mpv);
-             } else {
-                 tracing::warn!("MPV client not provided for overlay script engine");
-             }
+            if let Some(mpv) = mpv {
+                register_overlay_functions(&mut engine, mpv);
+            } else {
+                tracing::warn!("MPV client not provided for overlay script engine");
+            }
         }
         "global" => {
             if let Some(mpv) = mpv {
@@ -50,11 +50,48 @@ pub fn create_engine(
 
 fn register_content_loader_functions(engine: &mut Engine) {
     engine.register_fn("shell_execute", |cmd: String| -> String {
+        let allowed_commands = ["yt-dlp", "ffmpeg", "ffprobe", "echo"];
+
+        // Parse the command
+        let (exe, args) = match tokenize_command(&cmd) {
+            Ok(res) => res,
+            Err(e) => return format!("Error: Parse failed: {}", e),
+        };
+
+        // Validate executable
+        if !allowed_commands.contains(&exe.as_str()) {
+            let err = format!(
+                "Security Alert: Unauthorized command execution attempted: {}",
+                exe
+            );
+            tracing::error!(target: "slatron_node::rhai", "{}", err);
+            return format!("Error: {}", err);
+        }
+
+        // Validate args for yt-dlp to prevent --exec
+        if exe == "yt-dlp" {
+            for arg in &args {
+                if arg.starts_with("--exec") {
+                    let err = "Security Alert: yt-dlp --exec argument blocked";
+                    tracing::error!(target: "slatron_node::rhai", "{}", err);
+                    return format!("Error: {}", err);
+                }
+            }
+        }
+
         use std::process::Command;
 
-        match Command::new("sh").arg("-c").arg(&cmd).output() {
-            Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
-            Err(e) => format!("Error: {}", e),
+        // Execute directly (NO SHELL)
+        match Command::new(&exe).args(&args).output() {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    tracing::warn!(target: "slatron_node::rhai", "Command failed: {}\nStderr: {}", cmd, stderr);
+                }
+                stdout
+            }
+            Err(e) => format!("Error: Execution failed: {}", e),
         }
     });
 
@@ -95,7 +132,7 @@ fn register_content_loader_functions(engine: &mut Engine) {
         } else {
              output
         };
-        
+
         // Use curl for simple synchronous download
         let status_res = Command::new("curl")
             .arg("-L") // Follow redirects
@@ -116,7 +153,7 @@ fn register_content_loader_functions(engine: &mut Engine) {
                  tracing::error!(target: "slatron_node::rhai", "Failed to execute curl: {}", e);
             }
         }
-        
+
         expanded_output
     });
 
@@ -439,3 +476,78 @@ pub fn execute_script_function(
 
     Ok(())
 }
+
+// Helper to parse shell command string into (exe, args)
+fn tokenize_command(input: &str) -> Result<(String, Vec<String>), String> {
+    let mut args = Vec::new();
+    let mut current_arg = String::new();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut escape_next = false;
+
+    let chars: Vec<char> = input.trim().chars().collect();
+    if chars.is_empty() {
+        return Err("Empty command".to_string());
+    }
+
+    for c in chars {
+        if escape_next {
+            current_arg.push(c);
+            escape_next = false;
+            continue;
+        }
+
+        match c {
+            '\\' => {
+                if in_single_quote {
+                    current_arg.push(c);
+                } else {
+                    escape_next = true;
+                }
+            }
+            '\'' => {
+                if in_double_quote {
+                    current_arg.push(c);
+                } else {
+                    in_single_quote = !in_single_quote;
+                }
+            }
+            '"' => {
+                if in_single_quote {
+                    current_arg.push(c);
+                } else {
+                    in_double_quote = !in_double_quote;
+                }
+            }
+            ' ' | '\t' => {
+                if in_single_quote || in_double_quote {
+                    current_arg.push(c);
+                } else if !current_arg.is_empty() {
+                    args.push(current_arg.clone());
+                    current_arg.clear();
+                }
+            }
+            _ => {
+                current_arg.push(c);
+            }
+        }
+    }
+
+    if in_single_quote || in_double_quote {
+        return Err("Unterminated quote".to_string());
+    }
+
+    if !current_arg.is_empty() {
+        args.push(current_arg);
+    }
+
+    if args.is_empty() {
+        return Err("No command found".to_string());
+    }
+
+    let exe = args.remove(0);
+    Ok((exe, args))
+}
+
+#[cfg(test)]
+mod security_test;
