@@ -56,3 +56,59 @@ fn test_download_file_safe_path_rejection() {
         assert_eq!(val, false, "Should reject absolute path");
     }
 }
+
+#[test]
+fn test_shell_execute_blocked_command() {
+    let mut engine = create_engine("content_loader");
+
+    // Try to run "ls"
+    let script = r#"
+        let result = shell_execute("ls", ["-la"]);
+        result.stderr
+    "#;
+
+    let result = engine.eval::<String>(script);
+    if let Ok(val) = result {
+         assert!(val.contains("Security Alert"), "Should block unauthorized command 'ls'. Got: {}", val);
+    } else {
+         panic!("Script execution failed: {:?}", result);
+    }
+}
+
+#[test]
+fn test_shell_execute_blocked_args() {
+    let mut engine = create_engine("content_loader");
+
+    // Try to run "yt-dlp --exec 'touch hacked'"
+    let script = r#"
+        let result = shell_execute("yt-dlp", ["--exec", "touch hacked"]);
+        result.stderr
+    "#;
+
+    let result = engine.eval::<String>(script);
+    if let Ok(val) = result {
+         assert!(val.contains("Security Alert"), "Should block yt-dlp --exec. Got: {}", val);
+    } else {
+         panic!("Script execution failed: {:?}", result);
+    }
+}
+
+#[test]
+fn test_shell_execute_allowed_command() {
+    let mut engine = create_engine("content_loader");
+
+    // We can't actually run yt-dlp or ffmpeg if they are not installed in the environment.
+    // But we can check that it DOES NOT return "Security Alert".
+
+    let script = r#"
+        let result = shell_execute("ffmpeg", ["-version"]);
+        result.stderr
+    "#;
+
+    let result = engine.eval::<String>(script);
+    if let Ok(val) = result {
+         assert!(!val.contains("Security Alert"), "Should allow authorized command 'ffmpeg'. Got: {}", val);
+    } else {
+        panic!("Script execution failed: {:?}", result);
+    }
+}
