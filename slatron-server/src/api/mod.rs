@@ -7,6 +7,7 @@ pub mod permissions_api;
 pub mod schedules_api;
 pub mod scripts_api;
 pub mod settings_api;
+pub mod spot_reel_api;
 pub mod users_api;
 
 use crate::AppState;
@@ -119,6 +120,26 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/djs/:id/memories", post(dj_api::create_dj_memory))
         .route("/memories/:id", put(dj_api::update_dj_memory))
         .route("/memories/:id", delete(dj_api::delete_dj_memory))
+        // Spot Reels (Editor only for CUD)
+        .route("/spot-reels", post(spot_reel_api::create_spot_reel))
+        .route("/spot-reels/:id", put(spot_reel_api::update_spot_reel))
+        .route("/spot-reels/:id", delete(spot_reel_api::delete_spot_reel))
+        .route(
+            "/spot-reels/:id/items",
+            post(spot_reel_api::add_item),
+        )
+        .route(
+            "/spot-reels/:reel_id/items/:item_id",
+            put(spot_reel_api::update_item),
+        )
+        .route(
+            "/spot-reels/:reel_id/items/:item_id",
+            delete(spot_reel_api::delete_item),
+        )
+        .route(
+            "/spot-reels/:id/items/reorder",
+            put(spot_reel_api::reorder_items),
+        )
         .route_layer(middleware::from_fn_with_state(
             state,
             crate::auth::middleware::auth_middleware,
@@ -137,5 +158,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         // Bumpers (Public for Nodes)
         .route("/bumpers", get(bumper_api::list_bumpers))
         .route("/bumpers/:id", get(bumper_api::get_bumper))
+        // Spot Reels (Public GET for Nodes)
+        .route("/spot-reels", get(spot_reel_api::list_spot_reels))
+        .route("/spot-reels/:id", get(spot_reel_api::get_spot_reel))
         .merge(protected_routes)
 }

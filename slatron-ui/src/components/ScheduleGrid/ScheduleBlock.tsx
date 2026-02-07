@@ -9,7 +9,7 @@ export interface BlockData {
     title: string;
     start_time: string; // HH:MM:SS
     duration_minutes: number;
-    type: 'video' | 'stream' | 'image' | 'playlist';
+    type: 'video' | 'stream' | 'image' | 'playlist' | 'spot_reel' | 'live';
     color?: string;
     day_of_week?: number | null;
     specific_date?: string | null;
@@ -55,6 +55,7 @@ export const ScheduleBlock = ({
             case 'stream': return 'bg-purple-600/20 border-purple-500/50 hover:bg-purple-600/30';
             case 'image': return 'bg-amber-600/20 border-amber-500/50 hover:bg-amber-600/30';
             case 'live': return 'bg-rose-600/20 border-rose-500/50 hover:bg-rose-600/30';
+            case 'spot_reel': return 'bg-violet-600/20 border-violet-500/50 hover:bg-violet-600/30';
             default: return 'bg-indigo-600/20 border-indigo-500/50 hover:bg-indigo-600/30';
         }
     };
@@ -69,6 +70,7 @@ export const ScheduleBlock = ({
             case 'stream': return 'text-purple-200';
             case 'image': return 'text-amber-200';
             case 'live': return 'text-rose-200';
+            case 'spot_reel': return 'text-violet-200';
             default: return 'text-indigo-200';
         }
     };

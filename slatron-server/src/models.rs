@@ -225,7 +225,8 @@ pub struct ContentItem {
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
     pub transformer_scripts: Option<String>,
-    pub is_dj_accessible: bool, // New field, default false in DB
+    pub is_dj_accessible: bool,
+    pub spot_reel_id: Option<i32>,
 }
 
 #[derive(Debug, Insertable, Deserialize)]
@@ -241,6 +242,7 @@ pub struct NewContentItem {
     pub node_accessibility: Option<String>,
     pub transformer_scripts: Option<String>,
     pub is_dj_accessible: bool,
+    pub spot_reel_id: Option<i32>,
 }
 
 #[derive(Debug, AsChangeset, Deserialize)]
@@ -256,6 +258,7 @@ pub struct UpdateContentItem {
     pub node_accessibility: Option<Option<String>>,
     pub transformer_scripts: Option<Option<String>>,
     pub is_dj_accessible: Option<bool>,
+    pub spot_reel_id: Option<Option<i32>>,
 }
 
 // AI Provider models
@@ -513,4 +516,65 @@ pub struct UpdateBumper {
     pub rendered_path: Option<Option<String>>,
     pub duration_ms: Option<Option<i32>>,
     pub bumper_back_id: Option<Option<i32>>,
+}
+
+// Spot Reel models
+#[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
+#[diesel(table_name = crate::schema::spot_reels)]
+pub struct SpotReel {
+    pub id: Option<i32>,
+    pub title: String,
+    pub description: Option<String>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Insertable, Deserialize)]
+#[diesel(table_name = crate::schema::spot_reels)]
+pub struct NewSpotReel {
+    pub title: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, AsChangeset, Deserialize)]
+#[diesel(table_name = crate::schema::spot_reels)]
+pub struct UpdateSpotReel {
+    pub title: Option<String>,
+    pub description: Option<Option<String>>,
+}
+
+// Spot Reel Item models
+#[derive(Debug, Clone, Queryable, Selectable, Serialize, Deserialize)]
+#[diesel(table_name = crate::schema::spot_reel_items)]
+pub struct SpotReelItem {
+    pub id: Option<i32>,
+    pub spot_reel_id: i32,
+    pub item_type: String,
+    pub item_path: String,
+    pub display_duration_secs: i32,
+    pub position: i32,
+    pub title: Option<String>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Insertable, Deserialize)]
+#[diesel(table_name = crate::schema::spot_reel_items)]
+pub struct NewSpotReelItem {
+    pub spot_reel_id: i32,
+    pub item_type: String,
+    pub item_path: String,
+    pub display_duration_secs: i32,
+    pub position: i32,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, AsChangeset, Deserialize)]
+#[diesel(table_name = crate::schema::spot_reel_items)]
+pub struct UpdateSpotReelItem {
+    pub item_type: Option<String>,
+    pub item_path: Option<String>,
+    pub display_duration_secs: Option<i32>,
+    pub position: Option<i32>,
+    pub title: Option<Option<String>>,
 }

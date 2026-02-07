@@ -19,6 +19,7 @@ Slatron allows you to manage content, schedule broadcasts, and control playback 
 
 *   **Adaptive AI DJs**: Create diverse AI personalities to host your station, with support for Google Gemini, Anthropic Claude, OpenAI, Ollama, and local LLMs (Orpheus).
 *   **Dynamic Bumpers & Station Branding**: Create professional station idents, transitions, and lower thirds using MLT templates with variable substitution. Upload custom bumper backgrounds or use built-in animated gradients.
+*   **Spot Reels**: Bundle images, short videos, and web pages into looping carousels — perfect for ad breaks, rotating promos, or digital signage playlists. Schedule them like any other content.
 *   **Centralized Management**: Manage multiple playback nodes (TVs, screens) from a single server.
 *   **Flexible Scheduling**: Drag-and-drop schedule grid with layered priorities and interrupt scheduling.
 *   **Role-Based Access Control (RBAC)**: Secure your station with `Admin`, `Editor`, and `Viewer` roles.
@@ -47,6 +48,13 @@ Slatron allows you to manage content, schedule broadcasts, and control playback 
 #### Required on Playback Nodes
 *   **MPV** - Media player with IPC support
 *   **yt-dlp** - For YouTube content support (MPV integration)
+
+#### Required on Playback Nodes for Web Capture (Spot Reels with `web` items, Linux only)
+*   **Xvfb** - Virtual framebuffer for headless rendering
+*   **Chromium** or **Google Chrome** - Headless browser for web page capture
+*   **FFmpeg** - For x11grab screen capture to video
+
+> **Note**: Web capture in spot reels is a **Linux-only** feature. It requires Xvfb for a virtual display, a Chromium-based browser in kiosk mode, and FFmpeg with x11grab support. This pipeline does not work on macOS or Windows nodes. Image and video spot reel items work on all platforms.
 
 #### Required on Server (for Bumpers)
 *   **MLT Framework** (`melt` command) - For rendering bumper templates
@@ -104,6 +112,9 @@ brew install mpv yt-dlp
 **Installing Node Dependencies (Linux/Debian):**
 ```bash
 sudo apt install mpv yt-dlp
+
+# For web capture in spot reels (optional, Linux only):
+sudo apt install xvfb chromium ffmpeg
 ```
 
 **Installing Server Dependencies (macOS):**
@@ -320,6 +331,61 @@ if hour >= 6 && hour < 22 {
 
 ---
 
+## 📺 Spot Reels
+
+Spot Reels let you bundle small content items into a **looping carousel** — like commercial breaks, rotating promotional screens, or digital signage playlists. Each item in a reel has its own display duration, and the reel loops continuously until the schedule block ends.
+
+### How It Works
+
+1. **Create a Spot Reel** in the UI under "Spot Reels"
+2. **Add Items** to the reel — each item has a type, path, display duration, and position:
+   - **Image**: Static images displayed for a set duration (JPG, PNG, etc.)
+   - **Video**: Short video clips, capped at the configured display duration
+   - **Web**: Captures a live web page as video (see requirements below)
+3. **Schedule it** like any other content — spot reels automatically appear in the content picker on the schedule board with a purple badge
+4. **Playback**: The node fetches the reel from the server, then cycles through items in order, looping until the schedule block ends or the content changes
+
+### Item Types
+
+| Type | Description | Platform |
+|------|-------------|----------|
+| `image` | Static image displayed via MPV for the configured duration | All |
+| `video` | Video file played via MPV, capped at display duration | All |
+| `web` | Web page captured to video via Xvfb + Chromium + FFmpeg | Linux only |
+
+### Web Capture Requirements
+
+The `web` item type uses a pipeline of **Xvfb** (virtual framebuffer) + **Chromium** (headless kiosk mode) + **FFmpeg** (x11grab screen capture) to render a live web page to video. This is a **Linux-only** feature.
+
+**Required packages on the playback node:**
+```bash
+sudo apt install xvfb chromium ffmpeg
+```
+
+The system will:
+1. Start a virtual display on `:99` at 1920x1080
+2. Launch Chromium in kiosk mode pointing at the URL
+3. Capture the display with FFmpeg for the configured duration
+4. Cache the result for 5 minutes to avoid re-capturing on every loop
+
+If Chromium is not found as `chromium`, the system also tries `chromium-browser`, `google-chrome`, and `google-chrome-stable`.
+
+### Spot Reel API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/spot-reels` | List all spot reels |
+| `POST` | `/api/spot-reels` | Create a new spot reel |
+| `GET` | `/api/spot-reels/:id` | Get reel with items |
+| `PUT` | `/api/spot-reels/:id` | Update reel title/description |
+| `DELETE` | `/api/spot-reels/:id` | Delete reel and associated content |
+| `POST` | `/api/spot-reels/:id/items` | Add an item to the reel |
+| `PUT` | `/api/spot-reels/:id/items/:item_id` | Update an item |
+| `DELETE` | `/api/spot-reels/:id/items/:item_id` | Remove an item |
+| `PUT` | `/api/spot-reels/:id/items/reorder` | Reorder items by position |
+
+---
+
 ## 📦 Deployment & Frontend Embedding
 
 ### Single Binary Deployment
@@ -342,9 +408,9 @@ Secure your server by enabling HTTPS in `config.toml`. You will need a certifica
 ## 🛠 Architecture
 
 ### Components
-*   **slatron-server** (Rust/Axum): The brain. Handles database, API, Auth, and WebSockets.
-*   **slatron-node** (Rust): The player. Connects to server, downloads content/schedules, and controls MPV via IPC.
-*   **slatron-ui** (React/Vite): The face. communicating via REST API.
+*   **slatron-server** (Rust/Axum): The brain. Handles database, API, Auth, WebSockets, bumper rendering, and spot reel management.
+*   **slatron-node** (Rust): The player. Connects to server, downloads content/schedules, controls MPV via IPC, and runs the spot reel player.
+*   **slatron-ui** (React/Vite): The face. Web dashboard for managing content, schedules, bumpers, spot reels, and nodes.
 
 ### Scripting (Rhai)
 Slatron uses the Rhai scripting language for safety and flexibility.

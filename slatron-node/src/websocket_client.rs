@@ -290,6 +290,8 @@ impl WebSocketClient {
                             id: content_id,
                             content_path: p.clone(),
                             transformer_scripts: None,
+                            content_type: None,
+                            spot_reel_id: None,
                         },
                     );
                 }
@@ -311,6 +313,8 @@ impl WebSocketClient {
                                 id: content_id,
                                 content_path: p.clone(),
                                 transformer_scripts: None,
+                                content_type: None,
+                                spot_reel_id: None,
                             },
                         );
                         Some(p.clone())

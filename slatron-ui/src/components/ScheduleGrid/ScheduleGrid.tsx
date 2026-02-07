@@ -76,7 +76,6 @@ const DayColumn = ({
                                 <DraggableScheduleBlock
                                     block={{
                                         ...block,
-                                        type: 'video', // Assuming a default type for display
                                         title: block.title || `Block ${block.id}`
                                     }}
                                     pixelsPerMinute={pixelsPerMinute}
@@ -85,7 +84,6 @@ const DayColumn = ({
                                 <ScheduleBlock
                                     block={{
                                         ...block,
-                                        type: 'video',
                                         title: block.title || `Block ${block.id}`
                                     }}
                                     pixelsPerMinute={pixelsPerMinute}
@@ -122,17 +120,28 @@ export const ScheduleGrid = ({
     const enrichedBlocks = React.useMemo(() => {
         return blocks.map(b => {
             let title = 'Untitled Event';
+            let type: BlockData['type'] = 'video';
+
             if (b.content_id) {
-                title = content.find(c => c.id === b.content_id)?.title || `Content #${b.content_id}`;
-            } else if (b.dj_id) {
+                const contentItem = content.find(c => c.id === b.content_id);
+                title = contentItem?.title || `Content #${b.content_id}`;
+                if (contentItem?.content_type === 'spot_reel') {
+                    type = 'spot_reel';
+                }
+            }
+
+            if (b.dj_id) {
                 const dj = djs.find(d => d.id === b.dj_id);
-                title = dj ? `DJ: ${dj.name}` : `DJ #${b.dj_id}`;
+                if (!b.content_id) {
+                    title = dj ? `DJ: ${dj.name}` : `DJ #${b.dj_id}`;
+                }
+                type = 'live';
             }
 
             return {
                 ...b,
                 title,
-                type: b.dj_id ? 'live' : 'video' // Use 'live' style for DJ components
+                type,
             } as BlockData
         });
     }, [blocks, content, djs]);
@@ -250,7 +259,6 @@ export const ScheduleGrid = ({
                                             <ScheduleBlock
                                                 block={{
                                                     ...block,
-                                                    type: 'video',
                                                     title: block.title || `Block ${block.id}`
                                                 }}
                                                 pixelsPerMinute={pixelsPerMinute}

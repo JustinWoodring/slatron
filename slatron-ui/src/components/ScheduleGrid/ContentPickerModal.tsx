@@ -89,8 +89,12 @@ export const ContentPickerModal = ({ isOpen, onClose, onSelect, content, current
                                     {item.title}
                                 </span>
                                 <div className="flex items-center gap-2 mt-1">
-                                    <span className="text-[10px] uppercase tracking-wider bg-[var(--bg-primary)] px-1.5 py-0.5 rounded text-[var(--text-secondary)] border border-[var(--border-color)]">
-                                        {item.content_type}
+                                    <span className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+                                        item.content_type === 'spot_reel'
+                                            ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                                            : 'bg-[var(--bg-primary)] text-[var(--text-secondary)] border-[var(--border-color)]'
+                                    }`}>
+                                        {item.content_type === 'spot_reel' ? 'Spot Reel' : item.content_type}
                                     </span>
                                     {item.duration_minutes && (
                                         <span className="text-xs text-[var(--text-tertiary)]">

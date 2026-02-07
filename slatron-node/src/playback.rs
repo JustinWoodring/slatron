@@ -1,11 +1,51 @@
 use crate::NodeState;
 use anyhow::{anyhow, Result};
+use tokio_util::sync::CancellationToken;
 
 pub async fn play_content(
     state: &NodeState,
     content_id: i32,
     path_override: Option<String>,
 ) -> Result<()> {
+    // Cancel any active spot reel first
+    cancel_active_spot_reel(state).await;
+
+    // Check if this content is a spot reel
+    {
+        let cache = state.content_cache.read().await;
+        if let Some(item) = cache.get(&content_id) {
+            if item.content_type.as_deref() == Some("spot_reel") {
+                if let Some(reel_id) = item.spot_reel_id {
+                    tracing::info!(
+                        "Content ID {} is a spot reel (reel_id: {}), starting spot reel player",
+                        content_id,
+                        reel_id
+                    );
+
+                    // Update current content ID
+                    *state.current_content_id.write().await = Some(content_id);
+
+                    // Create cancellation token and store it
+                    let cancel = CancellationToken::new();
+                    *state.spot_reel_cancel.write().await = Some(cancel.clone());
+
+                    // Spawn spot reel player as background task
+                    let state_clone = state.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) =
+                            crate::spot_reel_player::play_spot_reel(&state_clone, reel_id, cancel)
+                                .await
+                        {
+                            tracing::error!("Spot reel player error: {}", e);
+                        }
+                    });
+
+                    return Ok(());
+                }
+            }
+        }
+    }
+
     // 1. Resolve Content Path
     let content_path = if let Some(p) = path_override {
         p
@@ -192,6 +232,9 @@ pub async fn play_content(
 }
 
 pub async fn stop_playback(state: &NodeState) {
+    // Cancel any active spot reel
+    cancel_active_spot_reel(state).await;
+
     unload_active_scripts(state).await;
 
     if let Err(e) = state.mpv.stop() {
@@ -199,6 +242,15 @@ pub async fn stop_playback(state: &NodeState) {
     }
 
     *state.current_content_id.write().await = None;
+}
+
+/// Cancel any actively running spot reel
+async fn cancel_active_spot_reel(state: &NodeState) {
+    let mut cancel_guard = state.spot_reel_cancel.write().await;
+    if let Some(cancel) = cancel_guard.take() {
+        tracing::info!("Cancelling active spot reel");
+        cancel.cancel();
+    }
 }
 
 async fn unload_active_scripts(state: &NodeState) {

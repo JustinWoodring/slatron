@@ -12,6 +12,8 @@ import UsersPage from './pages/UsersPage'
 import SettingsPage from './pages/SettingsPage'
 import DjsPage from './pages/DjsPage'
 import BumpersPage from './pages/BumpersPage'
+import SpotReelsPage from './pages/SpotReelsPage'
+import SpotReelEditorPage from './pages/SpotReelEditorPage'
 import Layout from './components/Layout/Layout'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -41,6 +43,8 @@ function App() {
         <Route path="users" element={<UsersPage />} />
         <Route path="djs" element={<DjsPage />} />
         <Route path="bumpers" element={<BumpersPage />} />
+        <Route path="spot-reels" element={<SpotReelsPage />} />
+        <Route path="spot-reels/:id" element={<SpotReelEditorPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
     </Routes>

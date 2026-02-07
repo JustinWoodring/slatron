@@ -660,6 +660,7 @@ impl ScriptService {
             updated_at: chrono::Utc::now().naive_utc(),
             transformer_scripts: None,
             is_dj_accessible: true,
+            spot_reel_id: None,
         };
         let item_dynamic: Dynamic = rhai::serde::to_dynamic(mock_item)?;
         scope.push("content_item", item_dynamic);

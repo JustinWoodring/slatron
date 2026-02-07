@@ -5,6 +5,8 @@ mod playback;
 mod rhai_engine;
 mod schedule;
 mod screenshot;
+mod spot_reel_player;
+mod web_capture;
 mod websocket_client;
 
 use anyhow::Result;
@@ -16,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc::UnboundedSender, RwLock};
+use tokio_util::sync::CancellationToken;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
@@ -46,6 +49,7 @@ pub struct NodeState {
     pub schedule_update_notify: Arc<tokio::sync::Notify>,
     pub schedule_dirty: Arc<AtomicBool>,
     pub bumper_queue: Arc<RwLock<VecDeque<String>>>, // Queue of bumper names/IDs to play
+    pub spot_reel_cancel: Arc<RwLock<Option<CancellationToken>>>, // Cancel token for active spot reel
 }
 
 // Log Visitor to extract message
@@ -126,7 +130,9 @@ struct ServerScheduleBlock {
 pub struct ServerContentItem {
     pub id: i32,
     pub content_path: String,
+    pub content_type: Option<String>,
     pub transformer_scripts: Option<String>,
+    pub spot_reel_id: Option<i32>,
 }
 
 #[derive(Deserialize)]
@@ -372,6 +378,7 @@ async fn main() -> Result<()> {
         schedule_update_notify: Arc::new(tokio::sync::Notify::new()),
         schedule_dirty: Arc::new(AtomicBool::new(false)),
         bumper_queue: Arc::new(RwLock::new(VecDeque::new())),
+        spot_reel_cancel: Arc::new(RwLock::new(None)),
     };
 
     // Start WebSocket client

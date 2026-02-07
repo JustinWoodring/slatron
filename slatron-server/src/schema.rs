@@ -61,6 +61,7 @@ diesel::table! {
         updated_at -> Timestamp,
         transformer_scripts -> Nullable<Text>,
         is_dj_accessible -> Bool,
+        spot_reel_id -> Nullable<Integer>,
     }
 }
 
@@ -186,6 +187,30 @@ diesel::table! {
 }
 
 diesel::table! {
+    spot_reels (id) {
+        id -> Nullable<Integer>,
+        title -> Text,
+        description -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    spot_reel_items (id) {
+        id -> Nullable<Integer>,
+        spot_reel_id -> Integer,
+        item_type -> Text,
+        item_path -> Text,
+        display_duration_secs -> Integer,
+        position -> Integer,
+        title -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     users (id) {
         id -> Nullable<Integer>,
         username -> Text,
@@ -198,6 +223,7 @@ diesel::table! {
 
 diesel::joinable!(bumpers -> bumper_backs (bumper_back_id));
 diesel::joinable!(content_items -> scripts (adapter_id));
+diesel::joinable!(content_items -> spot_reels (spot_reel_id));
 diesel::joinable!(dj_memories -> dj_profiles (dj_id));
 diesel::joinable!(node_schedules -> nodes (node_id));
 diesel::joinable!(node_schedules -> schedules (schedule_id));
@@ -208,6 +234,7 @@ diesel::joinable!(schedule_blocks -> dj_profiles (dj_id));
 diesel::joinable!(schedule_blocks -> schedules (schedule_id));
 diesel::joinable!(schedule_blocks -> scripts (script_id));
 diesel::joinable!(schedules -> dj_profiles (dj_id));
+diesel::joinable!(spot_reel_items -> spot_reels (spot_reel_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     ai_providers,
@@ -223,5 +250,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     schedule_blocks,
     schedules,
     scripts,
+    spot_reels,
+    spot_reel_items,
     users,
 );
