@@ -7,6 +7,7 @@ use chrono::Utc;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DjResponse {
@@ -259,16 +260,29 @@ Example JSON:
         for attempt in 1..=max_attempts {
             tracing::info!("Generating DJ Dialogue (Attempt {}/{})", attempt, max_attempts);
 
-            let json_str = match self
-                .ai_service
-                .generate_completion(&current_prompt, provider)
-                .await
+            let json_str = match tokio::time::timeout(
+                Duration::from_secs(90),
+                self.ai_service.generate_completion(&current_prompt, provider),
+            )
+            .await
             {
-                Ok(s) => s,
-                Err(e) => {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
                     tracing::error!("LLM Generation failed: {}", e);
                     if attempt >= max_attempts {
                         return Err(e);
+                    }
+                    continue;
+                }
+                Err(_) => {
+                    let err = anyhow!(
+                        "LLM generation timed out after 90s (attempt {}/{})",
+                        attempt,
+                        max_attempts
+                    );
+                    tracing::error!("{}", err);
+                    if attempt >= max_attempts {
+                        return Err(err);
                     }
                     continue;
                 }

@@ -661,70 +661,103 @@ async fn process_dj_logic(
                             )
                             .await
                         {
-                            Ok(r) => r,
+                            Ok(r) => Some(r),
                             Err(e) => {
-                                tracing::error!("Failed to generate dialogue: {}", e);
-                                return;
+                                // Total DJ failure: continue WITHOUT audio instead of
+                                // leaving the node in silent dead air until the next trigger.
+                                tracing::error!(
+                                    "Failed to generate dialogue: {}. Transitioning content dialogue-less.",
+                                    e
+                                );
+                                None
                             }
                         };
 
-                        // 2. Select Content
-                        let selected_track_opt = response
-                            .next_track_id
-                            .and_then(|id| candidates_clone.iter().find(|c| c.id == Some(id)))
-                            .or_else(|| {
+                        // 2. Select Content (LLM choice, or first candidate when dialogue failed)
+                        let selected_track_opt = match &response {
+                            Some(r) => r
+                                .next_track_id
+                                .and_then(|id| candidates_clone.iter().find(|c| c.id == Some(id)))
+                                .or_else(|| {
+                                    tracing::warn!(
+                                        "LLM did not select a valid track ID. Falling back to random."
+                                    );
+                                    candidates_clone.first()
+                                }),
+                            None => {
                                 tracing::warn!(
-                                    "LLM did not select a valid track ID. Falling back to random."
+                                    "No dialogue available. Falling back to first candidate to avoid dead air."
                                 );
                                 candidates_clone.first()
-                            });
+                            }
+                        };
 
-                        // 3. Prepare TTS (if speaking)
+                        // 3. Prepare TTS (if speaking; skipped when dialogue generation failed)
                         let mut tts_url: Option<String> = None;
-                        if dj_clone.talkativeness >= 0.99
-                            || rand::random::<f32>() <= dj_clone.talkativeness
-                        {
-                            tracing::debug!("DJ Generated Dialogue: {}", response.text);
-                            let output_dir = std::path::PathBuf::from("static/tts");
-                            let (voice_name, speech_modifier) = if let Ok(cfg) =
-                                serde_json::from_str::<serde_json::Value>(
-                                    &dj_clone.voice_config_json,
-                                ) {
-                                (
-                                    cfg.get("voice_name")
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string()),
-                                    cfg.get("speech_modifier")
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string()),
-                                )
-                            } else {
-                                (None, None)
-                            };
-
-                            if let Some(prov) = tts_provider_clone {
-                                match state_clone
-                                    .tts_service
-                                    .generate_speech(
-                                        &response.text,
-                                        voice_name,
-                                        response.emotion,
-                                        speech_modifier,
-                                        &output_dir,
-                                        &prov,
+                        if let Some(response) = &response {
+                            if dj_clone.talkativeness >= 0.99
+                                || rand::random::<f32>() <= dj_clone.talkativeness
+                            {
+                                tracing::debug!("DJ Generated Dialogue: {}", response.text);
+                                let output_dir = std::path::PathBuf::from("static/tts");
+                                let (voice_name, speech_modifier) = if let Ok(cfg) =
+                                    serde_json::from_str::<serde_json::Value>(
+                                        &dj_clone.voice_config_json,
                                     )
-                                    .await
                                 {
-                                    Ok(path) => {
-                                        let filename = path.file_name().unwrap().to_string_lossy();
-                                        tts_url = Some(format!(
-                                            "http://{}:{}/tts/{}",
-                                            state_clone.config.server.host,
-                                            state_clone.config.server.port,
-                                            filename
-                                        ));
+                                    (
+                                        cfg.get("voice_name")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string()),
+                                        cfg.get("speech_modifier")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string()),
+                                    )
+                                } else {
+                                    (None, None)
+                                };
+
+                                if let Some(prov) = tts_provider_clone {
+                                    match state_clone
+                                        .tts_service
+                                        .generate_speech(
+                                            &response.text,
+                                            voice_name,
+                                            response.emotion.clone(),
+                                            speech_modifier,
+                                            &output_dir,
+                                            &prov,
+                                        )
+                                        .await
+                                    {
+                                        Ok(path) => match path.file_name() {
+                                            Some(filename) => {
+                                                let base = state_clone
+                                                    .config
+                                                    .server
+                                                    .public_url
+                                                    .clone()
+                                                    .unwrap_or_else(|| {
+                                                        format!(
+                                                            "http://127.0.0.1:{}",
+                                                            state_clone.config.server.port
+                                                        )
+                                                    });
+                                                tts_url = Some(format!(
+                                                    "{}/tts/{}",
+                                                    base.trim_end_matches('/'),
+                                                    filename.to_string_lossy()
+                                                ));
+                                            }
+                                            None => {
+                                                tracing::error!(
+                                                    "TTS output path {:?} has no file name; skipping DJ audio.",
+                                                    path
+                                                );
+                                            }
+                                        },
+                                        Err(e) => tracing::error!("TTS Generation Failed: {}", e),
                                     }
-                                    Err(e) => tracing::error!("TTS Generation Failed: {}", e),
                                 }
                             }
                         }
@@ -771,7 +804,10 @@ async fn process_dj_logic(
                                 tracing::info!(
                                     "Sending LoadContent for song {} (AI Selected: {})",
                                     song_id,
-                                    response.next_track_id.is_some()
+                                    response
+                                        .as_ref()
+                                        .and_then(|r| r.next_track_id)
+                                        .is_some()
                                 );
                                 let load_cmd = NodeCommand::LoadContent {
                                     content_id: song_id,

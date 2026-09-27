@@ -14,6 +14,11 @@ pub struct Config {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    /// Public URL nodes use to reach this server (e.g. "http://192.168.1.50:8080").
+    /// Falls back to http://127.0.0.1:{port} when unset, which only works when
+    /// nodes run on the same machine as the server.
+    #[serde(default)]
+    pub public_url: Option<String>,
     pub https: Option<HttpsConfig>,
     pub ui_path: Option<String>,
 }
@@ -52,6 +57,13 @@ impl Config {
         r#"[server]
 host = "0.0.0.0"
 port = 8080
+
+# Optional: Public URL that nodes use to reach this server
+# (e.g. "http://192.168.1.50:8080" or "https://tv.example.com").
+# Required for DJ/TTS audio playback on nodes when binding to 0.0.0.0 or
+# running behind a reverse proxy. If unset, audio URLs fall back to
+# http://127.0.0.1:<port>, which only works when nodes run on this machine.
+# public_url = "http://192.168.1.50:8080"
 
 [server.https]
 enabled = false
