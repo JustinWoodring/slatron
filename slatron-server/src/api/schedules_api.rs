@@ -249,7 +249,9 @@ pub async fn create_schedule_block(
         return Err(StatusCode::BAD_REQUEST);
     }
     let start_mins = new_block.start_time.num_seconds_from_midnight() as i32 / 60;
-    if start_mins + new_block.duration_minutes > 1440 {
+    // Blocks may spill past midnight (e.g. 23:30 + 90min) up to the next
+    // midnight; the schedule resolver paints their spill-over tail.
+    if start_mins + new_block.duration_minutes > 2880 {
         return Err(StatusCode::BAD_REQUEST);
     }
 
@@ -309,7 +311,8 @@ pub async fn update_schedule_block(
         return Err(StatusCode::BAD_REQUEST);
     }
     let start_mins = updates.start_time.num_seconds_from_midnight() as i32 / 60;
-    if start_mins + updates.duration_minutes > 1440 {
+    // See create_schedule_block: overnight spill up to the next midnight.
+    if start_mins + updates.duration_minutes > 2880 {
         return Err(StatusCode::BAD_REQUEST);
     }
 

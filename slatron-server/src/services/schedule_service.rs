@@ -90,62 +90,96 @@ pub fn calculate_collapsed_schedule(
         }
     }
 
-    // 4. Create a 1440-minute timeline (24 hours * 60 minutes) representing LOCAL DAY
+    // 4. Fill a 1440-minute LOCAL-day timeline: for each minute the
+    //    highest-priority schedule with a covering block wins. Blocks from
+    //    `date - 1` that cross midnight cover their spill-over tail.
+    let fill_schedules: Vec<FillSchedule> = effective_schedules
+        .iter()
+        .map(|item| FillSchedule {
+            id: item.schedule.id.unwrap(),
+            name: item.schedule.name.clone(),
+            effective_priority: item.effective_priority,
+        })
+        .collect();
+
+    let timeline = fill_timeline(&fill_schedules, &schedule_blocks_cache, date, &dj_names_cache);
+
+    // 5. Collapse adjacent identical blocks
+    let collapsed = collapse_timeline(timeline);
+
+    Ok(collapsed)
+}
+
+/// A schedule reduced to what the timeline fill needs, pre-sorted highest
+/// priority first by the caller.
+pub(crate) struct FillSchedule {
+    pub id: i32,
+    pub name: String,
+    pub effective_priority: i32,
+}
+
+fn covering_block<'a>(blocks: &'a [ScheduleBlock], secs: u32) -> Option<&'a ScheduleBlock> {
+    blocks.iter().find(|b| {
+        let start =
+            b.start_time.hour() * 3600 + b.start_time.minute() * 60 + b.start_time.second();
+        let end = start + b.duration_minutes as u32 * 60;
+        secs >= start && secs < end
+    })
+}
+
+/// Fills the 1440-minute timeline for `date`.
+///
+/// Blocks are looked up for `date` itself, and for `date - 1` when the block
+/// ends after midnight: minute `m` of `date` is covered by a yesterday block
+/// whose interval contains `m + 1440` minutes. This is what makes overnight
+/// blocks (e.g. 23:30 + 90min) visible on both sides of midnight.
+pub(crate) fn fill_timeline(
+    schedules: &[FillSchedule],
+    blocks_by_schedule_date: &HashMap<(i32, NaiveDate), Vec<ScheduleBlock>>,
+    date: NaiveDate,
+    dj_names: &HashMap<i32, String>,
+) -> Vec<Option<TimelineSlot>> {
     let mut timeline: Vec<Option<TimelineSlot>> = vec![None; 1440];
+    let yesterday = date.pred_opt();
 
-    // 5. Fill Timeline
-    //    Iterate 0..1440 (LOCAL minutes).
-    //    Find matching block in Highest Priority Schedule.
-    for local_minute in 0..1440 {
-        // Find highest priority schedule that has a block at this local time
-        for item in &effective_schedules {
-            let schedule_id = item.schedule.id.unwrap();
-
-            // We use the requested 'date' as the LOCAL date.
-            if let Some(blocks) = schedule_blocks_cache.get(&(schedule_id, date)) {
-                // Check if any block covers this local_time
-                let mut match_found = false;
-                for block in blocks {
-                    let start = block.start_time;
-                    let end_secs = start.hour() * 3600
-                        + start.minute() * 60
-                        + start.second()
-                        + (block.duration_minutes as u32 * 60);
-                    // let end = chrono::NaiveTime::from_num_seconds_from_midnight_opt(end_secs, 0);
-
-                    let local_secs = local_minute * 60;
-                    let start_secs_val = start.hour() * 3600 + start.minute() * 60 + start.second();
-
-                    if local_secs >= start_secs_val && local_secs < end_secs {
-                        // Found a match!
-                        let d_name = block
-                            .dj_id
-                            .and_then(|did| dj_names_cache.get(&did).cloned());
-                        timeline[local_minute as usize] = Some(TimelineSlot {
-                            content_id: block.content_id,
-                            script_id: block.script_id,
-                            priority: item.effective_priority,
-                            schedule_name: item.schedule.name.clone(),
-                            schedule_id: schedule_id,
-                            block_id: block.id.expect("Block ID missing"),
-                            dj_id: block.dj_id,
-                            dj_name: d_name,
-                        });
-                        match_found = true;
-                        break;
-                    }
+    for (minute, slot) in timeline.iter_mut().enumerate() {
+        let local_secs = (minute as u32) * 60;
+        'schedules: for sched in schedules {
+            if let Some(blocks) = blocks_by_schedule_date.get(&(sched.id, date)) {
+                if let Some(block) = covering_block(blocks, local_secs) {
+                    *slot = Some(slot_for(sched, block, dj_names));
+                    break 'schedules;
                 }
-                if match_found {
-                    break; // Stop checking lower priority schedules for this minute
+            }
+            if let Some(ydate) = yesterday {
+                if let Some(blocks) = blocks_by_schedule_date.get(&(sched.id, ydate)) {
+                    if let Some(block) = covering_block(blocks, local_secs + 86_400) {
+                        *slot = Some(slot_for(sched, block, dj_names));
+                        break 'schedules;
+                    }
                 }
             }
         }
     }
 
-    // Collapse adjacent identical blocks
-    let collapsed = collapse_timeline(timeline);
+    timeline
+}
 
-    Ok(collapsed)
+fn slot_for(
+    sched: &FillSchedule,
+    block: &ScheduleBlock,
+    dj_names: &HashMap<i32, String>,
+) -> TimelineSlot {
+    TimelineSlot {
+        content_id: block.content_id,
+        script_id: block.script_id,
+        priority: sched.effective_priority,
+        schedule_name: sched.name.clone(),
+        schedule_id: sched.id,
+        block_id: block.id.expect("Block ID missing"),
+        dj_id: block.dj_id,
+        dj_name: block.dj_id.and_then(|did| dj_names.get(&did).cloned()),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -275,6 +309,173 @@ fn create_collapsed_block(start_min: usize, duration: i32, slot: &TimelineSlot) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveTime;
+    use std::collections::HashMap;
+
+    fn time(h: u32, m: u32) -> NaiveTime {
+        NaiveTime::from_hms_opt(h, m, 0).unwrap()
+    }
+
+    fn block(id: i32, start: NaiveTime, duration_minutes: i32) -> ScheduleBlock {
+        ScheduleBlock {
+            id: Some(id),
+            schedule_id: 1,
+            content_id: Some(100),
+            day_of_week: None,
+            specific_date: None,
+            start_time: start,
+            duration_minutes,
+            script_id: None,
+            dj_id: None,
+            created_at: chrono::naive::NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            updated_at: chrono::naive::NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+        }
+    }
+
+    fn sched(id: i32, name: &str, priority: i32) -> FillSchedule {
+        FillSchedule {
+            id,
+            name: name.to_string(),
+            effective_priority: priority,
+        }
+    }
+
+    fn collapse(
+        schedules: &[FillSchedule],
+        entries: &[(i32, NaiveDate, Vec<ScheduleBlock>)],
+        date: NaiveDate,
+    ) -> Vec<CollapsedBlock> {
+        let mut map: HashMap<(i32, NaiveDate), Vec<ScheduleBlock>> = HashMap::new();
+        for (id, d, blocks) in entries {
+            map.insert((*id, *d), blocks.clone());
+        }
+        collapse_timeline(fill_timeline(schedules, &map, date, &HashMap::new()))
+    }
+
+    #[test]
+    fn overnight_block_spills_across_midnight() {
+        // Yesterday 23:30 + 90min → the 00:00–01:00 tail must appear today.
+        let date = NaiveDate::from_ymd_opt(2026, 3, 15).unwrap();
+        let yesterday = date.pred_opt().unwrap();
+        let collapsed = collapse(
+            &[sched(1, "Overnight", 1)],
+            &[(
+                1,
+                yesterday,
+                vec![block(10, time(23, 30), 90)],
+            )],
+            date,
+        );
+
+        assert_eq!(collapsed.len(), 1);
+        assert_eq!(collapsed[0].start_time, "00:00:00");
+        assert_eq!(collapsed[0].duration_minutes, 60);
+        assert_eq!(collapsed[0].schedule_name, "Overnight");
+    }
+
+    #[test]
+    fn overnight_spill_yields_to_higher_priority_today() {
+        // Yesterday's 23:30+90 (prio 1) vs today's 00:15+30 (prio 10):
+        // today's block wins 00:15–00:45; the spill fills around it.
+        let date = NaiveDate::from_ymd_opt(2026, 3, 15).unwrap();
+        let yesterday = date.pred_opt().unwrap();
+        let collapsed = collapse(
+            &[sched(2, "Prime", 10), sched(1, "Overnight", 1)],
+            &[
+                (1, yesterday, vec![block(10, time(23, 30), 90)]),
+                (2, date, vec![block(20, time(0, 15), 30)]),
+            ],
+            date,
+        );
+
+        assert_eq!(collapsed.len(), 3);
+        assert_eq!(
+            (collapsed[0].start_time.as_str(), collapsed[0].duration_minutes),
+            ("00:00:00", 15)
+        );
+        assert_eq!(collapsed[1].schedule_name, "Prime");
+        assert_eq!(collapsed[1].duration_minutes, 30);
+        assert_eq!(
+            (collapsed[2].start_time.as_str(), collapsed[2].duration_minutes),
+            ("00:45:00", 15)
+        );
+        assert_eq!(collapsed[2].schedule_name, "Overnight");
+    }
+
+    #[test]
+    fn priority_tie_prefers_first_schedule() {
+        // Equal priorities: the first schedule in priority order wins.
+        let date = NaiveDate::from_ymd_opt(2026, 3, 15).unwrap();
+        let collapsed = collapse(
+            &[sched(1, "First", 5), sched(2, "Second", 5)],
+            &[
+                (1, date, vec![block(10, time(10, 0), 30)]),
+                (2, date, vec![block(20, time(10, 0), 30)]),
+            ],
+            date,
+        );
+
+        assert_eq!(collapsed.len(), 1);
+        assert_eq!(collapsed[0].schedule_name, "First");
+    }
+
+    #[test]
+    fn lower_priority_never_overrides_covered_minute() {
+        // High priority 09:00–10:00; low priority 08:00–11:00.
+        // High wins 09:00–10:00; low fills the rest.
+        let date = NaiveDate::from_ymd_opt(2026, 3, 15).unwrap();
+        let collapsed = collapse(
+            &[sched(2, "High", 10), sched(1, "Low", 1)],
+            &[
+                (2, date, vec![block(20, time(9, 0), 60)]),
+                (1, date, vec![block(10, time(8, 0), 180)]),
+            ],
+            date,
+        );
+
+        assert_eq!(collapsed.len(), 3);
+        assert_eq!(
+            (collapsed[0].start_time.as_str(), collapsed[0].duration_minutes),
+            ("08:00:00", 60)
+        );
+        assert_eq!(collapsed[1].schedule_name, "High");
+        assert_eq!(collapsed[1].duration_minutes, 60);
+        assert_eq!(
+            (collapsed[2].start_time.as_str(), collapsed[2].duration_minutes),
+            ("10:00:00", 60)
+        );
+        assert_eq!(collapsed[2].schedule_name, "Low");
+    }
+
+    #[test]
+    fn no_blocks_yields_empty_schedule() {
+        let date = NaiveDate::from_ymd_opt(2026, 3, 15).unwrap();
+        let collapsed = collapse(&[sched(1, "Empty", 1)], &[], date);
+        assert!(collapsed.is_empty());
+    }
+
+    #[test]
+    fn non_overnight_yesterday_blocks_do_not_leak() {
+        // Yesterday 22:00+30 (ends before midnight) must NOT appear today.
+        let date = NaiveDate::from_ymd_opt(2026, 3, 15).unwrap();
+        let yesterday = date.pred_opt().unwrap();
+        let collapsed = collapse(
+            &[sched(1, "Evening", 1)],
+            &[(
+                1,
+                yesterday,
+                vec![block(10, time(22, 0), 30)],
+            )],
+            date,
+        );
+        assert!(collapsed.is_empty());
+    }
 
     #[test]
     fn test_overlap_clipping_logic() {

@@ -316,9 +316,21 @@ pub async fn get_node_schedule(
             // Construct Local DateTime
             let local_dt = local_today.and_time(local_start);
 
-            // Convert to UTC
-            // Note: This matches the "Facility Day" concept, but timestamps will be UTC.
-            let utc_dt = local_dt.and_local_timezone(tz).unwrap().to_utc();
+            // Convert to UTC. Spring-forward gaps have no valid offset and
+            // fall-backs have two: never panic, pick a sane instant instead
+            // (earliest for ambiguous, +1h into the gap for nonexistent).
+            let utc_dt = match local_dt.and_local_timezone(tz) {
+                chrono::LocalResult::Single(dt) => dt,
+                chrono::LocalResult::Ambiguous(earliest, _) => earliest,
+                chrono::LocalResult::None => {
+                    match (local_dt + chrono::Duration::hours(1)).and_local_timezone(tz) {
+                        chrono::LocalResult::Single(dt) => dt,
+                        chrono::LocalResult::Ambiguous(earliest, _) => earliest,
+                        chrono::LocalResult::None => local_dt.and_utc().with_timezone(&tz),
+                    }
+                }
+            }
+            .to_utc();
 
             EffectiveBlock {
                 id: Some(idx as i32 + 1), // unique ID for frontend keys
