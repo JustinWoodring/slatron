@@ -11,9 +11,9 @@ use chrono::Utc;
 use diesel::prelude::*;
 use futures::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 // Server → Node messages
 #[derive(Debug, Serialize, Deserialize)]
@@ -103,11 +103,22 @@ pub async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> 
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
-    let (mut sender, mut receiver) = socket.split();
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
+    const OUTBOUND_CHANNEL_CAPACITY: usize = 256;
+    const AUTH_DEADLINE: Duration = Duration::from_secs(30);
+    // Window for the forwarder to flush queued messages (e.g. an auth-failure
+    // response) before the socket is torn down.
+    const TEARDOWN_FLUSH_GRACE: Duration = Duration::from_secs(1);
 
-    let mut node_id: Option<i32> = None;
-    let mut authenticated = false;
+    let (mut sender, mut receiver) = socket.split();
+    // Bounded: a stalled client now applies backpressure to senders instead of
+    // letting the queue grow without limit.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<ServerMessage>(OUTBOUND_CHANNEL_CAPACITY);
+
+    // Shared with the auth-deadline timer below.
+    let authed = Arc::new(AtomicBool::new(false));
+    let auth_deadline_hit = Arc::new(tokio::sync::Notify::new());
+    // Set once authenticated so cleanup knows which node to mark offline.
+    let node_id_slot: Arc<Mutex<Option<i32>>> = Arc::new(Mutex::new(None));
 
     // Clone state for use in the async blocks
     let state_clone = state.clone();
@@ -123,8 +134,55 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     });
 
+    // Auth deadline: an unauthenticated connection must not hold a socket and
+    // task open forever.
+    let deadline_task = {
+        let authed = Arc::clone(&authed);
+        let deadline_hit = Arc::clone(&auth_deadline_hit);
+        tokio::spawn(async move {
+            tokio::time::sleep(AUTH_DEADLINE).await;
+            if !authed.load(Ordering::SeqCst) {
+                tracing::warn!(
+                    "Closing node connection: not authenticated within {}s",
+                    AUTH_DEADLINE.as_secs()
+                );
+                deadline_hit.notify_one();
+            }
+        })
+    };
+
+    // Bridge for external broadcasters (heartbeat monitor, API): they keep the
+    // unbounded sender API stored in connected_nodes, but their messages are
+    // pushed into this socket's bounded channel. On a stalled client the
+    // bounded channel fills and broadcasts are dropped instead of being
+    // buffered without limit.
+    let (broadcast_tx, mut broadcast_rx) =
+        tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
+    let broadcast_tx_for_map = broadcast_tx.clone();
+    let bounded_tx = tx.clone();
+    let pump_task = tokio::spawn(async move {
+        while let Some(msg) = broadcast_rx.recv().await {
+            match bounded_tx.try_send(msg) {
+                Ok(()) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    tracing::warn!("Node outbound channel full; dropping broadcast message");
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => break,
+            }
+        }
+    });
+
     // Handle incoming messages
+    let authed_for_recv = Arc::clone(&authed);
+    let node_id_slot_for_recv = Arc::clone(&node_id_slot);
+    let broadcast_tx_for_recv = broadcast_tx_for_map;
     let mut recv_task = tokio::spawn(async move {
+        let authed = authed_for_recv;
+        let id_slot = node_id_slot_for_recv;
+        let broadcast_tx = broadcast_tx_for_recv;
+        let mut node_id: Option<i32> = None;
+        let mut authenticated = false;
+
         while let Some(Ok(msg)) = receiver.next().await {
             if let Message::Text(text) = msg {
                 if let Ok(node_msg) = serde_json::from_str::<NodeMessage>(&text) {
@@ -141,19 +199,22 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 Ok(id) => {
                                     node_id = Some(id);
                                     authenticated = true;
+                                    authed.store(true, Ordering::SeqCst);
+                                    *id_slot.lock().expect("node id slot poisoned") = Some(id);
 
                                     let _ = tx.send(ServerMessage::AuthResponse {
                                         success: true,
                                         message: "Authenticated successfully".to_string(),
                                         node_id: Some(id),
-                                    });
+                                    })
+                                    .await;
 
                                     tracing::info!("Node {} authenticated", node_name);
 
                                     // Register in connected_nodes
                                     {
                                         let mut nodes = state_clone.connected_nodes.write().await;
-                                        nodes.insert(id, tx.clone());
+                                        nodes.insert(id, broadcast_tx.clone());
                                     }
                                 }
                                 Err(e) => {
@@ -161,7 +222,16 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                         success: false,
                                         message: e,
                                         node_id: None,
-                                    });
+                                    })
+                                    .await;
+                                    tracing::warn!(
+                                        "Node {} failed authentication; closing connection",
+                                        node_name
+                                    );
+                                    // End the recv loop so handle_socket
+                                    // flushes the failure response and drops
+                                    // the socket.
+                                    break;
                                 }
                             }
                         }
@@ -196,7 +266,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                         tracing::error!("Failed to update node status: {}", e);
                                     }
 
-                                    let _ = tx.send(ServerMessage::HeartbeatAck);
+                                    let _ = tx.send(ServerMessage::HeartbeatAck).await;
 
                                     tracing::debug!(
                                         "Node {} heartbeat: status={}, content={:?}, pos={:?}, dur={:?}, cpu={:.1}%, mem={:.1}MB",
@@ -216,7 +286,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 // Send schedule update notification
                                 let _ = tx.send(ServerMessage::ScheduleUpdated {
                                     timestamp: Utc::now().to_rfc3339(),
-                                });
+                                })
+                                .await;
                             }
                         }
                         NodeMessage::ReportPaths { available_paths } => {
@@ -306,17 +377,36 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     });
 
-    // Wait for either task to finish
+    // Wait for either task to finish, or the auth deadline to fire
     tokio::select! {
         _ = (&mut send_task) => {
             recv_task.abort();
+            pump_task.abort();
+            deadline_task.abort();
         }
-        _ = (&mut recv_task) => {
+        _ = &mut recv_task => {
+            // Recv ended: client disconnected, auth failed, or protocol error.
+            // The forwarder can't exit via channel close (the broadcast bridge
+            // holds a producer), so give it a brief window to flush queued
+            // messages (e.g. an auth-failure response), then tear it down.
+            let _ = tokio::time::timeout(TEARDOWN_FLUSH_GRACE, &mut send_task).await;
             send_task.abort();
+            pump_task.abort();
+            deadline_task.abort();
+        }
+        _ = auth_deadline_hit.notified() => {
+            // Never authenticated in time: aborting the forwarder and recv
+            // task drops both halves of the socket, closing the connection.
+            recv_task.abort();
+            send_task.abort();
+            pump_task.abort();
+            // deadline_task already completed; abort is a harmless no-op.
+            deadline_task.abort();
         }
     }
 
     // Clean up: mark node as offline and remove from connected_nodes
+    let node_id = *node_id_slot.lock().expect("node id slot poisoned");
     if let Some(id) = node_id {
         let _ = mark_node_offline(&state, id).await;
         // Remove from connected_nodes

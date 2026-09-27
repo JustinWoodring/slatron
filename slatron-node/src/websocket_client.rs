@@ -9,6 +9,12 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use crate::heartbeat::HeartbeatManager;
 use crate::{NodeState, ServerContentItem};
 
+// The server ACKs every heartbeat (default interval: 5s), so this much silence
+// means the connection is silently dead (NAT drop, network partition).
+const READ_IDLE_TIMEOUT: Duration = Duration::from_secs(45);
+// Deadline for the server to answer our Authenticate message.
+const AUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+
 // Server → Node messages
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -139,25 +145,46 @@ impl WebSocketClient {
         let auth_json = serde_json::to_string(&auth_msg)?;
         write.send(Message::Text(auth_json)).await?;
 
-        // Wait for auth response
-        if let Some(Ok(Message::Text(text))) = read.next().await {
-            if let Ok(ServerMessage::AuthResponse {
-                success,
-                message,
-                node_id,
-            }) = serde_json::from_str(&text)
-            {
-                if !success {
-                    tracing::error!("Authentication failed: {}", message);
-                    return Err(anyhow::anyhow!("Authentication failed"));
-                }
+        // Wait for auth response; a server that stays silent here is dead.
+        match tokio::time::timeout(AUTH_RESPONSE_TIMEOUT, read.next()).await {
+            Err(_) => {
+                tracing::error!(
+                    "Timed out after {:?} waiting for auth response",
+                    AUTH_RESPONSE_TIMEOUT
+                );
+                return Err(anyhow::anyhow!("Timed out waiting for auth response"));
+            }
+            Ok(None) => {
+                tracing::warn!("Connection closed before auth response");
+                return Err(anyhow::anyhow!("Connection closed before auth response"));
+            }
+            Ok(Some(Err(e))) => {
+                tracing::error!("WebSocket error while authenticating: {}", e);
+                return Err(anyhow::anyhow!("WebSocket error during authentication: {}", e));
+            }
+            Ok(Some(Ok(Message::Text(text)))) => {
+                if let Ok(ServerMessage::AuthResponse {
+                    success,
+                    message,
+                    node_id,
+                }) = serde_json::from_str(&text)
+                {
+                    if !success {
+                        tracing::error!("Authentication failed: {}", message);
+                        return Err(anyhow::anyhow!("Authentication failed"));
+                    }
 
-                if let Some(id) = node_id {
-                    *self.state.node_id.write().await = Some(id);
-                    tracing::info!("Authenticated successfully as Node ID: {}", id);
-                } else {
-                    tracing::warn!("Authenticated but no Node ID received");
+                    if let Some(id) = node_id {
+                        *self.state.node_id.write().await = Some(id);
+                        tracing::info!("Authenticated successfully as Node ID: {}", id);
+                    } else {
+                        tracing::warn!("Authenticated but no Node ID received");
+                    }
                 }
+            }
+            Ok(Some(Ok(_))) => {
+                tracing::warn!("Unexpected non-text message while authenticating");
+                return Err(anyhow::anyhow!("Unexpected message during authentication"));
             }
         }
 
@@ -183,40 +210,61 @@ impl WebSocketClient {
         // Start heartbeat task
         let heartbeat_manager = HeartbeatManager::new(self.state.clone(), msg_tx.clone());
 
-        tokio::spawn(async move {
+        let heartbeat_task = tokio::spawn(async move {
             heartbeat_manager.start().await;
         });
 
         // Start Screenshot manager
         let screenshot_manager =
             crate::screenshot::ScreenshotManager::new(self.state.clone(), msg_tx.clone());
-        tokio::spawn(async move {
+        let screenshot_task = tokio::spawn(async move {
             screenshot_manager.start().await;
         });
 
-        // Handle incoming messages
-        while let Some(msg_result) = read.next().await {
-            match msg_result {
-                Ok(Message::Text(text)) => {
+        // Handle incoming messages. The server ACKs heartbeats (~every 5s), so
+        // READ_IDLE_TIMEOUT of silence means the connection is silently dead:
+        // give up and let the reconnect backoff in `connect_and_run` take over.
+        loop {
+            match tokio::time::timeout(READ_IDLE_TIMEOUT, read.next()).await {
+                Ok(Some(Ok(Message::Text(text)))) => {
                     if let Ok(server_msg) = serde_json::from_str::<ServerMessage>(&text) {
                         self.handle_server_message(server_msg).await?;
                     }
                 }
-                Ok(Message::Close(_)) => {
+                Ok(Some(Ok(Message::Close(_)))) => {
                     tracing::info!("Server closed connection");
                     break;
                 }
-                Err(e) => {
+                Ok(Some(Ok(_))) => {}
+                Ok(Some(Err(e))) => {
                     tracing::error!("WebSocket error: {}", e);
                     break;
                 }
-                _ => {}
+                Ok(None) => {
+                    tracing::info!("WebSocket stream ended");
+                    break;
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "No WebSocket traffic for {:?}; assuming dead connection",
+                        READ_IDLE_TIMEOUT
+                    );
+                    break;
+                }
             }
         }
 
-        // Clean up
+        // Cancel this connection's tasks so they don't pile up across
+        // reconnects. An aborted write task can't be meaningfully awaited.
+        write_task.abort();
+        heartbeat_task.abort();
+        screenshot_task.abort();
         drop(msg_tx);
-        let _ = write_task.await;
+
+        // Don't leave the global log sender pointing into the dead channel.
+        if let Ok(mut sender_guard) = self.state.log_sender.lock() {
+            *sender_guard = None;
+        }
 
         Ok(())
     }
