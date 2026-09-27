@@ -13,7 +13,7 @@ pub fn spawn_mpv(socket_path: &str) -> Result<Child> {
         let _ = std::fs::remove_file(socket_path);
     }
 
-    let child = Command::new("mpv")
+    let mut child = Command::new("mpv")
         .arg("--idle")
         .arg("--player-operation-mode=pseudo-gui")
         .arg(format!("--input-ipc-server={}", socket_path))
@@ -21,20 +21,172 @@ pub fn spawn_mpv(socket_path: &str) -> Result<Child> {
         .stderr(Stdio::piped())
         .spawn()?;
 
-    // Wait for socket to be created
+    // Wait for socket to be created, checking on every poll whether the
+    // process is still alive: an mpv that died during startup (bad flag,
+    // missing audio device, etc.) must surface as an error, not a silent Ok.
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_secs(10) {
         if Path::new(socket_path).exists() {
             return Ok(child);
         }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(anyhow::anyhow!(
+                    "mpv exited during startup before creating IPC socket '{}': {}",
+                    socket_path,
+                    status
+                ));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "failed to check mpv status while waiting for IPC socket '{}': {}",
+                    socket_path,
+                    e
+                ));
+            }
+        }
         thread::sleep(Duration::from_millis(100));
     }
 
-    // If we timed out, check if process is still alive
-    // If process died, return error.
-    // If process is alive but no socket... maybe slow start?
-
+    // Timed out with the process still alive (no exit status reported) but no
+    // socket... maybe slow start? Return it and let IPC commands fail loudly.
+    tracing::warn!(
+        "mpv (socket '{}') did not create its IPC socket within 10s; assuming slow start",
+        socket_path
+    );
     Ok(child)
+}
+
+/// Supervises both MPV processes: every 5 seconds, checks each child via
+/// try_wait(); if it has exited, logs the exit status and respawns it with
+/// spawn_mpv on the given socket path, replacing the child in state's
+/// mpv_process (voice=true → mpv_process_voice) under its Mutex.
+pub async fn supervise(
+    state: crate::NodeState,
+    main_socket_path: String,
+    voice_socket_path: String,
+) {
+    tracing::info!("MPV supervisor started (checking every 5s)");
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    loop {
+        interval.tick().await;
+        supervise_slot(&state, &main_socket_path, false);
+        supervise_slot(&state, &voice_socket_path, true);
+    }
+}
+
+/// Checks one MPV slot for an exited child and respawns it in place.
+fn supervise_slot(state: &crate::NodeState, socket_path: &str, voice: bool) {
+    let label = if voice { "MPV (Voice)" } else { "MPV (Main)" };
+    let slot = if voice {
+        &state.mpv_process_voice
+    } else {
+        &state.mpv_process
+    };
+
+    // Non-blocking reap check: try_wait() never blocks, so the std Mutex is
+    // only held for the check itself, never across the blocking respawn below.
+    let exit_status = {
+        let mut guard = match slot.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::error!(
+                    "{} process slot mutex poisoned; skipping supervision tick",
+                    label
+                );
+                return;
+            }
+        };
+        match guard.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(Some(status)) => Some(status),
+                Ok(None) => None,
+                Err(e) => {
+                    tracing::warn!("Failed to check {} process status: {}", label, e);
+                    None
+                }
+            },
+            // No managed child (initial spawn failed or mpv is started
+            // manually): nothing to supervise and no exit status to retry.
+            None => None,
+        }
+    };
+
+    let Some(status) = exit_status else {
+        return;
+    };
+
+    tracing::error!(
+        "{} process exited unexpectedly ({}); respawning on socket {}",
+        label,
+        status,
+        socket_path
+    );
+
+    match spawn_mpv(socket_path) {
+        Ok(mut child) => {
+            drain_output(&mut child, voice);
+            match slot.lock() {
+                Ok(mut guard) => {
+                    *guard = Some(child);
+                    tracing::info!("{} respawned successfully on socket {}", label, socket_path);
+                }
+                Err(_) => {
+                    tracing::error!(
+                        "{} process slot mutex poisoned; killing respawned child",
+                        label
+                    );
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+        Err(e) => {
+            // The slot keeps the old dead child, whose cached exit status is
+            // re-detected on every tick, so the next tick retries the respawn.
+            tracing::error!(
+                "Failed to respawn {} on socket '{}': {}; will retry next tick",
+                label,
+                socket_path,
+                e
+            );
+        }
+    }
+}
+
+/// Forwards a respawned child's stdout/stderr to the tracing log, mirroring
+/// the capture threads main.rs sets up for the initially spawned processes.
+/// Without this, the piped output buffer fills and the respawned mpv stalls.
+fn drain_output(child: &mut Child, voice: bool) {
+    if let Some(stdout) = child.stdout.take() {
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    if voice {
+                        tracing::debug!(target: "slatron_node::mpv_voice", "{}", l);
+                    } else {
+                        tracing::debug!(target: "slatron_node::mpv_main", "{}", l);
+                    }
+                }
+            }
+        });
+    }
+    if let Some(stderr) = child.stderr.take() {
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    if voice {
+                        tracing::error!(target: "slatron_node::mpv_voice", "{}", l);
+                    } else {
+                        tracing::error!(target: "slatron_node::mpv_main", "{}", l);
+                    }
+                }
+            }
+        });
+    }
 }
 
 pub struct MpvClient {

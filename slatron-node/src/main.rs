@@ -399,6 +399,14 @@ async fn main() -> Result<()> {
         poll_schedule(state_clone_poll).await;
     });
 
+    // Supervise MPV processes: respawn either one if it dies so playback
+    // recovers instead of sitting on a black screen until manual restart.
+    tokio::spawn(crate::mpv_client::supervise(
+        state.clone(),
+        config.mpv_socket_path.clone(),
+        config.voice_mpv_socket_path.clone(),
+    ));
+
     // Start playback loop with shutdown signal handling
     tokio::select! {
         _ = playback_loop(state.clone()) => {},
@@ -591,8 +599,25 @@ async fn fetch_and_update_schedule(client: &reqwest::Client, state: &NodeState, 
 }
 
 async fn playback_loop(state: NodeState) {
-    let mut last_content_id: Option<i32> = None;
+    /// What the loop thinks MPV should be doing right now. `Playing` and
+    /// `Failed` are keyed by content id so a block keeps its state across
+    /// 1s ticks; `Failed` retries with exponential backoff (mpv respawn by
+    /// the supervisor makes later retries succeed).
+    enum PlayState {
+        Idle,
+        Playing(i32),
+        Failed {
+            content_id: i32,
+            path: Option<String>,
+            next_attempt: tokio::time::Instant,
+            backoff_secs: u64,
+        },
+    }
+
+    const INITIAL_BACKOFF_SECS: u64 = 5;
+    const MAX_BACKOFF_SECS: u64 = 60;
     let loop_interval = Duration::from_secs(1);
+    let mut play_state = PlayState::Idle;
 
     loop {
         // Check for bumpers
@@ -611,33 +636,89 @@ async fn playback_loop(state: NodeState) {
             cache.get_current_block(today, time).cloned()
         };
 
-        if let Some(block) = block_opt {
-            if block.content_id != last_content_id {
-                if block.content_id.is_none() {
-                    tracing::info!("Status: Entering DJ Block (Waiting for Dynamic Content)");
-                } else {
-                    tracing::info!("Content changed to {:?}", block.content_id);
-                }
-                last_content_id = block.content_id;
-
-                if let Some(content_id) = block.content_id {
-                    // Pass the block's content path (which might be None, play_content resolves it)
-                    if let Err(e) =
-                        crate::playback::play_content(&state, content_id, block.content_path).await
-                    {
-                        tracing::error!("Failed to play content: {}", e);
-                    }
-                } else {
-                    // Content ID is None but there is a block? Stop.
-                    crate::playback::stop_playback(&state).await;
-                }
-            }
-        } else {
+        let Some(block) = block_opt else {
             // Nothing scheduled
-            if last_content_id.is_some() {
+            if !matches!(play_state, PlayState::Idle) {
                 tracing::info!("Schedule ended, stopping playback");
                 crate::playback::stop_playback(&state).await;
-                last_content_id = None;
+                play_state = PlayState::Idle;
+            }
+            continue;
+        };
+
+        let Some(content_id) = block.content_id else {
+            // DJ block: no scheduled content; wait for dynamic (DJ) content.
+            if !matches!(play_state, PlayState::Idle) {
+                tracing::info!("Status: Entering DJ Block (Waiting for Dynamic Content)");
+                crate::playback::stop_playback(&state).await;
+                play_state = PlayState::Idle;
+            }
+            continue;
+        };
+
+        match &play_state {
+            PlayState::Playing(id) if *id == content_id => continue,
+            PlayState::Failed {
+                content_id: failed_id,
+                path,
+                next_attempt,
+                backoff_secs,
+            } if *failed_id == content_id => {
+                if tokio::time::Instant::now() < *next_attempt {
+                    continue;
+                }
+                tracing::info!("Retrying content {}", content_id);
+                match crate::playback::play_content(&state, content_id, path.clone()).await {
+                    Ok(()) => {
+                        tracing::info!("Content {} now playing", content_id);
+                        play_state = PlayState::Playing(content_id);
+                    }
+                    Err(e) => {
+                        let new_backoff = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
+                        tracing::error!(
+                            "Retry failed for content {} ({}); next attempt in {}s",
+                            content_id,
+                            e,
+                            new_backoff
+                        );
+                        play_state = PlayState::Failed {
+                            content_id,
+                            path: path.clone(),
+                            next_attempt: tokio::time::Instant::now()
+                                + Duration::from_secs(new_backoff),
+                            backoff_secs: new_backoff,
+                        };
+                    }
+                }
+            }
+            _ => {
+                // New content (fresh block or different id)
+                tracing::info!("Content changed to {:?}", content_id);
+                match crate::playback::play_content(&state, content_id, block.content_path.clone())
+                    .await
+                {
+                    Ok(()) => {
+                        play_state = PlayState::Playing(content_id);
+                    }
+                    Err(e) => {
+                        // Do not advance to Playing on failure: retry with
+                        // backoff instead of sitting on a black screen for
+                        // the rest of the block.
+                        tracing::error!(
+                            "Failed to play content {} ({}); retrying in {}s",
+                            content_id,
+                            e,
+                            INITIAL_BACKOFF_SECS
+                        );
+                        play_state = PlayState::Failed {
+                            content_id,
+                            path: block.content_path.clone(),
+                            next_attempt: tokio::time::Instant::now()
+                                + Duration::from_secs(INITIAL_BACKOFF_SECS),
+                            backoff_secs: INITIAL_BACKOFF_SECS,
+                        };
+                    }
+                }
             }
         }
     }
