@@ -1,19 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
-import { useScriptStore } from '../stores/scriptStore'
+import { useScripts } from '../hooks/useScripts'
 import { CreateScriptModal } from '../components/Scripts/CreateScriptModal'
 
 export default function ScriptsPage() {
   const { user } = useAuthStore()
   const isEditor = user?.role === 'admin' || user?.role === 'editor'
-  const { scripts, fetchScripts } = useScriptStore()
+  const { data: scripts = [] } = useScripts()
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const navigate = useNavigate()
-
-  useEffect(() => {
-    fetchScripts()
-  }, [])
 
   return (
     <div className="h-full flex flex-col gap-6 p-6">
@@ -38,7 +34,7 @@ export default function ScriptsPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {scripts.map((script: any) => (
+        {scripts.map((script) => (
           <div
             key={script.id}
             onClick={() => navigate(`/scripts/${script.id}`)}

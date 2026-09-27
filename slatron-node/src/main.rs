@@ -188,6 +188,8 @@ server_url = "{}"
 secret_key = "{}"
 heartbeat_interval_secs = 5
 schedule_poll_interval_secs = 60
+# How often (seconds) to capture a screenshot; minimum 5
+screenshot_interval_secs = 10
 mpv_socket_path = "/tmp/mpv-socket"
 offline_mode_warning_hours = 24
 "#,

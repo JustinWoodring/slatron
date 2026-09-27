@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useScriptStore } from '../../stores/scriptStore'
+import { useCreateScript } from '../../hooks/useScripts'
 import { useNavigate } from 'react-router-dom'
 
 interface CreateScriptModalProps {
@@ -8,7 +8,7 @@ interface CreateScriptModalProps {
 }
 
 export const CreateScriptModal = ({ isOpen, onClose }: CreateScriptModalProps) => {
-    const { createScript } = useScriptStore()
+    const createScriptMutation = useCreateScript()
     const navigate = useNavigate()
     const [formData, setFormData] = useState({
         name: '',
@@ -69,7 +69,7 @@ fn on_unload(settings) {
 `
             }
 
-            const newScript = await createScript({
+            const newScript = await createScriptMutation.mutateAsync({
                 ...formData,
                 script_content: defaultContent,
                 parameters_schema: '{}',

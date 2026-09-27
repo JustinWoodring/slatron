@@ -2,6 +2,7 @@ import React from 'react';
 
 
 import clsx from 'clsx';
+import type { DraggableAttributes, DraggableSyntheticListeners } from '@dnd-kit/core';
 
 export interface BlockData {
     id: number;
@@ -23,12 +24,17 @@ interface ScheduleBlockProps {
     block: BlockData;
     pixelsPerMinute: number;
     showDetails?: boolean;
+    // Live height override during a resize drag (in minutes)
+    previewMinutes?: number | null;
     // Dnd props (optional for static rendering)
     isDragging?: boolean;
+    readOnly?: boolean;
     style?: React.CSSProperties;
-    attributes?: any;
-    listeners?: any;
+    attributes?: DraggableAttributes;
+    listeners?: DraggableSyntheticListeners;
     setNodeRef?: (node: HTMLElement | null) => void;
+    // Rendered inside the block (used for the resize handle)
+    resizeHandle?: React.ReactNode;
 }
 
 // Visual Component (No Hooks)
@@ -36,11 +42,13 @@ export const ScheduleBlock = ({
     block,
     pixelsPerMinute,
     showDetails = true,
+    previewMinutes,
     isDragging,
     style,
     attributes,
     listeners,
     setNodeRef,
+    resizeHandle,
     className
 }: ScheduleBlockProps & { className?: string }) => {
 
@@ -78,7 +86,7 @@ export const ScheduleBlock = ({
     return (
         <div
             ref={setNodeRef}
-            style={{ ...style, height: `${block.duration_minutes * pixelsPerMinute}px` }}
+            style={{ ...style, height: `${(previewMinutes ?? block.duration_minutes) * pixelsPerMinute}px` }}
             {...attributes}
             {...listeners}
             className={clsx(
@@ -115,14 +123,46 @@ export const ScheduleBlock = ({
                 </button>
             </div>
 
-            {/* Resize Handle (Visual Only for now) */}
-            <div className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-white/10" />
+            {/* Resize Handle (drag bottom edge to change duration) */}
+            {resizeHandle}
         </div>
     );
 };
 
 // Sortable Wrapper (With Hooks)
 import { useDraggable } from '@dnd-kit/core';
+
+// Bottom-edge drag handle for resizing block duration. Its own draggable so
+// dnd-kit reports `resize-<id>` as the active id separately from moves.
+const BlockResizeHandle = ({ blockId }: { blockId: number }) => {
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        isDragging,
+    } = useDraggable({ id: `resize-${blockId}` });
+
+    // stopPropagation prevents the pointer event from also starting a block
+    // move (the move listeners sit on the parent block element).
+    const handlePointerDown = (e: React.PointerEvent) => {
+        e.stopPropagation();
+        listeners?.onPointerDown?.(e);
+    };
+
+    return (
+        <div
+            ref={setNodeRef}
+            {...attributes}
+            onPointerDown={handlePointerDown}
+            className={`absolute bottom-0 left-0 right-0 h-2.5 cursor-ns-resize rounded-b-md flex items-center justify-center transition-colors ${
+                isDragging ? 'bg-white/30' : 'hover:bg-white/20'
+            }`}
+            title="Drag to resize"
+        >
+            <div className="w-8 h-1 rounded-full bg-white/40" />
+        </div>
+    );
+};
 
 export const DraggableScheduleBlock = (props: ScheduleBlockProps) => {
     const {
@@ -139,6 +179,10 @@ export const DraggableScheduleBlock = (props: ScheduleBlockProps) => {
         opacity: isDragging ? 0.3 : 1,
     };
 
+    const resizeHandle = props.readOnly
+        ? undefined
+        : <BlockResizeHandle blockId={props.block.id} />;
+
     return (
         <ScheduleBlock
             {...props}
@@ -147,6 +191,7 @@ export const DraggableScheduleBlock = (props: ScheduleBlockProps) => {
             attributes={attributes}
             listeners={listeners}
             isDragging={isDragging}
+            resizeHandle={resizeHandle}
         />
     );
 };

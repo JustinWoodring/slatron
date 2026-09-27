@@ -1,6 +1,14 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useSpotReelStore, SpotReelItem } from '../stores/spotReelStore'
+import {
+  useSpotReel,
+  useUpdateSpotReel,
+  useAddSpotReelItem,
+  useUpdateSpotReelItem,
+  useDeleteSpotReelItem,
+  useReorderSpotReelItems,
+  SpotReelItem,
+} from '../hooks/useSpotReels'
 import { useAuthStore } from '../stores/authStore'
 
 const ITEM_TYPE_ICONS: Record<string, { icon: JSX.Element; color: string; label: string }> = {
@@ -39,22 +47,63 @@ export default function SpotReelEditorPage() {
   const { user } = useAuthStore()
   const isEditor = user?.role === 'admin' || user?.role === 'editor'
 
-  const {
-    currentReel,
-    loading,
-    fetchSpotReel,
-    updateSpotReel,
-    addItem,
-    updateItem,
-    deleteItem,
-    reorderItems,
-  } = useSpotReelStore()
-
-  // Reel metadata editing
+  const reelId = id ? parseInt(id) : null
+  const { data: currentReel, isLoading: loading } = useSpotReel(reelId)
+  const updateReelMutation = useUpdateSpotReel()
+  const addItemMutation = useAddSpotReelItem(reelId ?? 0)
+  const updateItemMutation = useUpdateSpotReelItem(reelId ?? 0)
+  const deleteItemMutation = useDeleteSpotReelItem(reelId ?? 0)
+  const reorderItemsMutation = useReorderSpotReelItems(reelId ?? 0)
   const [editTitle, setEditTitle] = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [isDirty, setIsDirty] = useState(false)
-  const [saving, setSaving] = useState(false)
+  const saving = updateReelMutation.isPending
+
+  const handleSaveMetadata = async () => {
+    if (!currentReel || !isDirty) return
+    try {
+      await updateReelMutation.mutateAsync({
+        id: currentReel.id,
+        data: {
+          title: editTitle.trim(),
+          description: editDescription.trim() || undefined,
+        },
+      })
+      setIsDirty(false)
+    } catch (err) {
+      console.error('Failed to update spot reel:', err)
+    }
+  }
+
+  const addingItem = addItemMutation.isPending
+
+  const handleAddItem = async () => {
+    if (!currentReel || !newItemPath.trim()) return
+    try {
+      await addItemMutation.mutateAsync({
+        item_type: newItemType,
+        item_path: newItemPath.trim(),
+        display_duration_secs: newItemDuration,
+        title: newItemTitle.trim() || undefined,
+      })
+      setNewItemPath('')
+      setNewItemTitle('')
+      setNewItemDuration(10)
+      setShowAddItem(false)
+    } catch (err) {
+      console.error('Failed to add item:', err)
+    }
+  }
+
+  const handleDeleteItem = async (item: SpotReelItem) => {
+    if (!currentReel) return
+    if (!confirm(`Remove "${item.title || item.item_path}" from this reel?`)) return
+    try {
+      await deleteItemMutation.mutateAsync(item.id)
+    } catch (err) {
+      console.error('Failed to delete item:', err)
+    }
+  }
 
   // Add item form
   const [showAddItem, setShowAddItem] = useState(false)
@@ -62,7 +111,6 @@ export default function SpotReelEditorPage() {
   const [newItemPath, setNewItemPath] = useState('')
   const [newItemTitle, setNewItemTitle] = useState('')
   const [newItemDuration, setNewItemDuration] = useState(10)
-  const [addingItem, setAddingItem] = useState(false)
 
   // Inline edit state
   const [editingItemId, setEditingItemId] = useState<number | null>(null)
@@ -73,12 +121,6 @@ export default function SpotReelEditorPage() {
   // Drag state
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
-
-  useEffect(() => {
-    if (id) {
-      fetchSpotReel(parseInt(id))
-    }
-  }, [id])
 
   useEffect(() => {
     if (currentReel) {
@@ -95,53 +137,6 @@ export default function SpotReelEditorPage() {
     setIsDirty(titleChanged || descChanged)
   }, [editTitle, editDescription, currentReel])
 
-  const handleSaveMetadata = async () => {
-    if (!currentReel || !isDirty) return
-    setSaving(true)
-    try {
-      await updateSpotReel(currentReel.id, {
-        title: editTitle.trim(),
-        description: editDescription.trim() || undefined,
-      })
-      setIsDirty(false)
-    } catch (err) {
-      console.error('Failed to update spot reel:', err)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleAddItem = async () => {
-    if (!currentReel || !newItemPath.trim()) return
-    setAddingItem(true)
-    try {
-      await addItem(currentReel.id, {
-        item_type: newItemType,
-        item_path: newItemPath.trim(),
-        display_duration_secs: newItemDuration,
-        title: newItemTitle.trim() || undefined,
-      })
-      setNewItemPath('')
-      setNewItemTitle('')
-      setNewItemDuration(10)
-      setShowAddItem(false)
-    } catch (err) {
-      console.error('Failed to add item:', err)
-    } finally {
-      setAddingItem(false)
-    }
-  }
-
-  const handleDeleteItem = async (item: SpotReelItem) => {
-    if (!currentReel) return
-    if (!confirm(`Remove "${item.title || item.item_path}" from this reel?`)) return
-    try {
-      await deleteItem(currentReel.id, item.id)
-    } catch (err) {
-      console.error('Failed to delete item:', err)
-    }
-  }
-
   const handleStartEditItem = (item: SpotReelItem) => {
     setEditingItemId(item.id)
     setEditItemDuration(item.display_duration_secs)
@@ -152,11 +147,14 @@ export default function SpotReelEditorPage() {
   const handleSaveItemEdit = async () => {
     if (!currentReel || editingItemId === null) return
     try {
-      await updateItem(currentReel.id, editingItemId, {
-        display_duration_secs: editItemDuration,
-        title: editItemTitle.trim() || undefined,
-        item_path: editItemPath.trim(),
-      } as Partial<SpotReelItem>)
+      await updateItemMutation.mutateAsync({
+        itemId: editingItemId,
+        data: {
+          display_duration_secs: editItemDuration,
+          title: editItemTitle.trim() || undefined,
+          item_path: editItemPath.trim(),
+        },
+      })
       setEditingItemId(null)
     } catch (err) {
       console.error('Failed to update item:', err)
@@ -195,11 +193,11 @@ export default function SpotReelEditorPage() {
     setDragOverIndex(null)
 
     try {
-      await reorderItems(currentReel.id, reorderPayload)
+      await reorderItemsMutation.mutateAsync(reorderPayload)
     } catch (err) {
       console.error('Failed to reorder items:', err)
     }
-  }, [dragIndex, currentReel, reorderItems])
+  }, [dragIndex, currentReel, reorderItemsMutation])
 
   const handleDragEnd = useCallback(() => {
     setDragIndex(null)

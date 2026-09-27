@@ -1,22 +1,19 @@
-import { useEffect, useState } from 'react'
-import { useDjStore } from '../../stores/djStore'
+import { useState } from 'react'
+import { useAiProviders, useDeleteAiProvider } from '../../hooks/useDjs'
 import { useAuthStore } from '../../stores/authStore'
 import { AiProvider } from '../../api/dj'
 import CreateAiProviderModal from '../Djs/CreateAiProviderModal'
 
 export default function AiProviderList() {
     const { user } = useAuthStore()
-    const { aiProviders, fetchAiProviders, removeAiProvider, isLoading, error } = useDjStore()
+    const { data: aiProviders = [], isLoading, error } = useAiProviders()
+    const deleteAiProviderMutation = useDeleteAiProvider()
 
     const isEditor = user?.role === 'admin' || user?.role === 'editor'
 
     const [selectedProvider, setSelectedProvider] = useState<AiProvider | null>(null)
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [toastMessage, setToastMessage] = useState<string | null>(null)
-
-    useEffect(() => {
-        fetchAiProviders()
-    }, [fetchAiProviders])
 
     const handleEdit = (provider: AiProvider) => {
         setSelectedProvider(provider)
@@ -31,7 +28,7 @@ export default function AiProviderList() {
     const handleDelete = async (id: number) => {
         if (!window.confirm("Are you sure you want to delete this provider?")) return
         try {
-            await removeAiProvider(id)
+            await deleteAiProviderMutation.mutateAsync(id)
             setToastMessage('Provider deleted successfully')
             setTimeout(() => setToastMessage(null), 3000)
         } catch (err) {
@@ -43,8 +40,6 @@ export default function AiProviderList() {
     const handleModalClose = () => {
         setIsModalOpen(false)
         setSelectedProvider(null)
-        // Refresh list to show updates
-        fetchAiProviders()
     }
 
     return (
@@ -69,7 +64,7 @@ export default function AiProviderList() {
 
             {error && (
                 <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400">
-                    Error loading providers: {error}
+                    Error loading providers: {error.message}
                 </div>
             )}
 

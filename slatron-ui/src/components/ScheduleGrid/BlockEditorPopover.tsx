@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useContentStore } from '../../stores/contentStore'
-import { useScheduleStore } from '../../stores/scheduleStore'
-import { useDjStore } from '../../stores/djStore'
+import { useParams } from 'react-router-dom'
+import { useBlocks, useUpdateBlock, useDeleteBlock } from '../../hooks/useSchedules'
+import { useContent } from '../../hooks/useContent'
+import { useDjs } from '../../hooks/useDjs'
+import { blocksOverlap } from '../../utils/scheduleOverlap'
 import { ContentPickerModal } from './ContentPickerModal'
 
 interface BlockEditorPopoverProps {
@@ -12,12 +14,20 @@ interface BlockEditorPopoverProps {
 }
 
 export function BlockEditorPopover({ blockId, onClose, position, readOnly = false }: BlockEditorPopoverProps) {
-    const { blocks, updateBlock, deleteBlock, selectedScheduleId } = useScheduleStore()
-    const { content, fetchContent } = useContentStore()
-    const { djs, fetchDjs } = useDjStore()
+    // The URL is the single source of truth for schedule selection.
+    const { id } = useParams()
+    const parsedScheduleId = id ? parseInt(id, 10) : NaN
+    const scheduleId = Number.isNaN(parsedScheduleId) ? null : parsedScheduleId
+    const { data: blocks = [] } = useBlocks(scheduleId)
+    // Mutations are unreachable while scheduleId is null, so the fallback
+    // id 0 is never used in a request.
+    const updateBlockMutation = useUpdateBlock(scheduleId ?? 0)
+    const deleteBlockMutation = useDeleteBlock(scheduleId ?? 0)
+    const { data: content = [] } = useContent()
+    const { data: djs = [] } = useDjs()
     const popoverRef = useRef<HTMLDivElement>(null)
 
-    // Find the block from the store
+    // Find the block from the query
     const block = blocks.find(b => b.id === blockId)
 
     const [formData, setFormData] = useState({
@@ -29,11 +39,6 @@ export function BlockEditorPopover({ blockId, onClose, position, readOnly = fals
     })
 
     const [blockType, setBlockType] = useState<'content' | 'dj'>('content')
-
-    useEffect(() => {
-        fetchContent()
-        fetchDjs()
-    }, [])
 
     useEffect(() => {
         if (block) {
@@ -118,12 +123,13 @@ export function BlockEditorPopover({ blockId, onClose, position, readOnly = fals
         e.preventDefault()
         if (readOnly) return
         setError(null)
-        if (!block || !selectedScheduleId) return
+        if (!block || !scheduleId) return
 
         try {
             const startTime = formData.start_time.length === 5 ? formData.start_time + ':00' : formData.start_time
 
-            const hasOverlap = useScheduleStore.getState().checkOverlap(
+            const hasOverlap = blocksOverlap(
+                blocks,
                 formData.day_of_week,
                 null, // Date (Weekly)
                 startTime,
@@ -141,15 +147,15 @@ export function BlockEditorPopover({ blockId, onClose, position, readOnly = fals
                 start_time: startTime,
                 content_id: blockType === 'content' && formData.content_id ? Number(formData.content_id) : null,
                 dj_id: blockType === 'dj' && formData.dj_id ? Number(formData.dj_id) : null
-                // schedule_id injected by store
+                // schedule_id injected by the mutation hook
             }
 
-            await updateBlock(selectedScheduleId, block.id, payload)
+            await updateBlockMutation.mutateAsync({ blockId: block.id, data: payload })
             // Close after explicit save? Google Calendar closes.
             onClose()
-        } catch (error: any) {
+        } catch (error) {
             console.error("Failed to update block", error)
-            setError(error.message || "Failed to update block")
+            setError(error instanceof Error ? error.message : "Failed to update block")
         }
     }
 
@@ -158,15 +164,15 @@ export function BlockEditorPopover({ blockId, onClose, position, readOnly = fals
         e.stopPropagation()
         if (readOnly) return
         setError(null)
-        if (!block || !selectedScheduleId) return
+        if (!block || !scheduleId) return
 
         try {
-            console.log(`Deleting block ${block.id} from schedule ${selectedScheduleId}`)
-            await deleteBlock(selectedScheduleId, block.id)
+            console.log(`Deleting block ${block.id} from schedule ${scheduleId}`)
+            await deleteBlockMutation.mutateAsync(block.id)
             onClose()
-        } catch (error: any) {
+        } catch (error) {
             console.error("Failed to delete block", error)
-            setError(error.message || "Failed to delete block")
+            setError(error instanceof Error ? error.message : "Failed to delete block")
             setIsDeleting(false)
         }
     }

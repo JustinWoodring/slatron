@@ -1,6 +1,5 @@
 mod gemini_adapter;
 mod orpheus_adapter;
-mod elevenlabs_adapter;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -11,7 +10,6 @@ use crate::models::AiProvider;
 
 pub use gemini_adapter::GeminiTtsAdapter;
 pub use orpheus_adapter::OrpheusTtsAdapter;
-pub use elevenlabs_adapter::ElevenLabsTtsAdapter;
 
 /// Configuration for TTS generation
 #[derive(Debug, Clone)]
@@ -70,10 +68,6 @@ impl TtsService {
                 provider,
             )?)),
             "gemini" | "google" | "gemini-tts" => Ok(Box::new(GeminiTtsAdapter::new(
-                self.client.clone(),
-                provider,
-            )?)),
-            "elevenlabs" => Ok(Box::new(ElevenLabsTtsAdapter::new(
                 self.client.clone(),
                 provider,
             )?)),

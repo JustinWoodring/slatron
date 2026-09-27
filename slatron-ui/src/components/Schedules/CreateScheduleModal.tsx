@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useScheduleStore } from '../../stores/scheduleStore'
+import { useCreateSchedule } from '../../hooks/useSchedules'
 
 interface CreateScheduleModalProps {
     isOpen: boolean
@@ -7,7 +7,7 @@ interface CreateScheduleModalProps {
 }
 
 export const CreateScheduleModal = ({ isOpen, onClose }: CreateScheduleModalProps) => {
-    const { createSchedule } = useScheduleStore()
+    const createSchedule = useCreateSchedule()
     const [formData, setFormData] = useState({
         name: '',
         description: '',
@@ -21,7 +21,7 @@ export const CreateScheduleModal = ({ isOpen, onClose }: CreateScheduleModalProp
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         try {
-            await createSchedule(formData)
+            await createSchedule.mutateAsync(formData)
             onClose()
             // Reset form
             setFormData({

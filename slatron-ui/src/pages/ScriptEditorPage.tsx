@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useScriptStore } from '../stores/scriptStore'
 import { useAuthStore } from '../stores/authStore'
+import { useScripts, useUpdateScript, useDeleteScript, executeScript, Script } from '../hooks/useScripts'
 
 import { apiClient } from '../api/client'
 
@@ -11,9 +11,11 @@ export default function ScriptEditorPage() {
     const isEditor = user?.role === 'admin' || user?.role === 'editor'
     const { id } = useParams<{ id: string }>()
     const navigate = useNavigate()
-    const { scripts, fetchScripts, updateScript, deleteScript, executeScript } = useScriptStore()
+    const { data: scripts = [] } = useScripts()
+    const updateScriptMutation = useUpdateScript()
+    const deleteScriptMutation = useDeleteScript()
 
-    const [script, setScript] = useState<any>(null)
+    const [script, setScript] = useState<Script | null>(null)
     const [content, setContent] = useState('')
     const [isDirty, setIsDirty] = useState(false)
     const [isGlobal, setIsGlobal] = useState(false)
@@ -29,9 +31,6 @@ export default function ScriptEditorPage() {
     const [isExecuting, setIsExecuting] = useState(false)
 
     useEffect(() => {
-        if (!scripts.length) {
-            fetchScripts()
-        }
         fetchGlobals()
     }, [])
 
@@ -112,10 +111,13 @@ export default function ScriptEditorPage() {
                 return
             }
 
-            await updateScript(script.id, {
-                ...script,
-                script_content: content,
-                parameters_schema: schemaContent
+            await updateScriptMutation.mutateAsync({
+                id: script.id,
+                data: {
+                    ...script,
+                    script_content: content,
+                    parameters_schema: schemaContent
+                }
             })
             setIsDirty(false)
         } catch (e) {
@@ -127,7 +129,7 @@ export default function ScriptEditorPage() {
     const handleDelete = async () => {
         if (!script || !window.confirm('Are you sure you want to delete this script?')) return
         try {
-            await deleteScript(script.id)
+            await deleteScriptMutation.mutateAsync(script.id)
             navigate('/scripts')
         } catch (e) {
             console.error(e)

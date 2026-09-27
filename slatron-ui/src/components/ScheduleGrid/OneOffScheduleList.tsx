@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react'
-import { useScheduleStore } from '../../stores/scheduleStore'
-import { useContentStore } from '../../stores/contentStore'
+import React, { useState } from 'react'
+import { useParams } from 'react-router-dom'
+import { useBlocks, useDeleteBlock } from '../../hooks/useSchedules'
+import { useContent } from '../../hooks/useContent'
 // import { BlockEditorPopover } from './BlockEditorPopover' // Reusing edit logic if possible, or build new?
 // Actually popover needs X/Y. List view might be better with a Modal or just reuse Popover with fake pos?
 // Better to simple inline edit or modal. Let's use a simpler Modal for One-Offs.
@@ -11,12 +12,15 @@ import { useContentStore } from '../../stores/contentStore'
 import { EventEditorModal } from './EventEditorModal'
 
 export const OneOffScheduleList = () => {
-    const { blocks, deleteBlock, selectedScheduleId } = useScheduleStore()
-    const { content, fetchContent } = useContentStore()
-
-    useEffect(() => {
-        fetchContent()
-    }, [])
+    // The URL is the single source of truth for schedule selection.
+    const { id } = useParams()
+    const parsedScheduleId = id ? parseInt(id, 10) : NaN
+    const scheduleId = Number.isNaN(parsedScheduleId) ? null : parsedScheduleId
+    const { data: blocks = [] } = useBlocks(scheduleId)
+    // Deletion is unreachable while scheduleId is null, so the fallback
+    // id 0 is never used in a request.
+    const deleteBlockMutation = useDeleteBlock(scheduleId ?? 0)
+    const { data: content = [] } = useContent()
 
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [editingBlockId, setEditingBlockId] = useState<number | null>(null)
@@ -31,9 +35,9 @@ export const OneOffScheduleList = () => {
 
     const handleDelete = async (e: React.MouseEvent, blockId: number) => {
         e.stopPropagation()
-        if (!selectedScheduleId) return;
+        if (!scheduleId) return;
         if (confirm('Delete this event?')) {
-            await deleteBlock(selectedScheduleId, blockId)
+            await deleteBlockMutation.mutateAsync(blockId)
         }
     }
 
@@ -47,7 +51,7 @@ export const OneOffScheduleList = () => {
         setIsModalOpen(true)
     }
 
-    if (!selectedScheduleId) return null;
+    if (!scheduleId) return null;
 
     return (
         <div className="p-4 overflow-y-auto h-full relative">
@@ -114,7 +118,7 @@ export const OneOffScheduleList = () => {
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
                 blockId={editingBlockId}
-                scheduleId={selectedScheduleId}
+                scheduleId={scheduleId}
             />
         </div>
     )

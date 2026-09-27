@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { useScheduleStore } from '../../stores/scheduleStore'
-import { useContentStore } from '../../stores/contentStore'
+import { isAxiosError } from 'axios'
+import { useBlocks, useCreateBlock, useUpdateBlock } from '../../hooks/useSchedules'
+import { useContent } from '../../hooks/useContent'
+import { blocksOverlap } from '../../utils/scheduleOverlap'
 import { ContentPickerModal } from './ContentPickerModal'
 
 interface EventEditorModalProps {
@@ -11,8 +13,10 @@ interface EventEditorModalProps {
 }
 
 export const EventEditorModal = ({ isOpen, onClose, blockId, scheduleId }: EventEditorModalProps) => {
-    const { blocks, createBlock, updateBlock, checkOverlap } = useScheduleStore()
-    const { content, fetchContent } = useContentStore()
+    const { data: blocks = [] } = useBlocks(scheduleId)
+    const createBlockMutation = useCreateBlock(scheduleId)
+    const updateBlockMutation = useUpdateBlock(scheduleId)
+    const { data: content = [] } = useContent()
 
     // Find block if editing
     const editingBlock = blockId ? blocks.find(b => b.id === blockId) : null
@@ -26,12 +30,6 @@ export const EventEditorModal = ({ isOpen, onClose, blockId, scheduleId }: Event
 
     const [isContentPickerOpen, setIsContentPickerOpen] = useState(false)
     const [error, setError] = useState<string | null>(null)
-
-    useEffect(() => {
-        if (isOpen) {
-            fetchContent()
-        }
-    }, [isOpen])
 
     useEffect(() => {
         if (isOpen) {
@@ -62,7 +60,8 @@ export const EventEditorModal = ({ isOpen, onClose, blockId, scheduleId }: Event
         const startTimeFull = formData.start_time.length === 5 ? formData.start_time + ':00' : formData.start_time
 
         // Overlap Check (One-off)
-        const hasOverlap = checkOverlap(
+        const hasOverlap = blocksOverlap(
+            blocks,
             null, // day
             formData.specific_date,
             startTimeFull,
@@ -87,14 +86,14 @@ export const EventEditorModal = ({ isOpen, onClose, blockId, scheduleId }: Event
             }
 
             if (editingBlock) {
-                await updateBlock(scheduleId, editingBlock.id, payload)
+                await updateBlockMutation.mutateAsync({ blockId: editingBlock.id, data: payload })
             } else {
-                await createBlock(scheduleId, payload)
+                await createBlockMutation.mutateAsync(payload)
             }
             onClose()
-        } catch (e: any) {
+        } catch (e) {
             console.error("Failed to save event", e)
-            setError(e.response?.status === 409 ? 'Backend rejected due to overlap.' : 'Failed to save event')
+            setError(isAxiosError(e) && e.response?.status === 409 ? 'Backend rejected due to overlap.' : 'Failed to save event')
         }
     }
 

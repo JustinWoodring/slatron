@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { useContentStore, ContentItem } from '../../stores/contentStore'
-import { useScriptStore } from '../../stores/scriptStore'
+import { useCreateContent, useUpdateContent, ContentItem } from '../../hooks/useContent'
+import { useScripts, executeScript } from '../../hooks/useScripts'
 
 interface CreateContentModalProps {
     isOpen: boolean
@@ -9,8 +9,9 @@ interface CreateContentModalProps {
 }
 
 export default function CreateContentModal({ isOpen, onClose, editingContent }: CreateContentModalProps) {
-    const { createContent, updateContent } = useContentStore()
-    const { scripts, fetchScripts, executeScript } = useScriptStore()
+    const createContentMutation = useCreateContent()
+    const updateContentMutation = useUpdateContent()
+    const { data: scripts = [] } = useScripts()
 
     // UI State
     const [mode, setMode] = useState<'manual' | 'loader' | 'bulk_review' | 'import_report'>('manual')
@@ -41,7 +42,6 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
 
     useEffect(() => {
         if (isOpen) {
-            fetchScripts()
             if (editingContent) {
                 let transformers: any[] = []
                 try {
@@ -196,7 +196,7 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
                     continue;
                 }
 
-                await createContent(data as any)
+                await createContentMutation.mutateAsync(data)
                 successCount++
             } catch (e: any) {
                 console.error(`Failed to import item ${i}`, e)
@@ -233,9 +233,9 @@ export default function CreateContentModal({ isOpen, onClose, editingContent }: 
             }
 
             if (editingContent) {
-                await updateContent(editingContent.id, data)
+                await updateContentMutation.mutateAsync({ id: editingContent.id, updates: data })
             } else {
-                await createContent(data)
+                await createContentMutation.mutateAsync(data)
             }
             handleClose()
         } catch (error) {

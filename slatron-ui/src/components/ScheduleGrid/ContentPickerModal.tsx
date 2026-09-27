@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ContentItem } from '../../stores/contentStore'
+import type { ContentItem } from '../../hooks/useContent'
 
 interface ContentPickerModalProps {
     isOpen: boolean

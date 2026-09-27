@@ -19,8 +19,9 @@ impl ScreenshotManager {
     }
 
     pub async fn start(self) {
-        // Run every 60 seconds
-        let mut tick = interval(Duration::from_secs(60));
+        // Run at the configured interval (minimum 5 seconds to avoid hammering MPV)
+        let interval_secs = self.state.config.screenshot_interval_secs.max(5);
+        let mut tick = interval(Duration::from_secs(interval_secs));
         let temp_dir = env::temp_dir();
         let screenshot_path = temp_dir.join("slatron_node_screenshot.jpg");
 

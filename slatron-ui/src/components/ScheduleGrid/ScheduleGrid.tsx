@@ -5,9 +5,10 @@ import {
 } from '@dnd-kit/core';
 import { ScheduleBlock, DraggableScheduleBlock, BlockData } from './ScheduleBlock';
 import { TimeAxis } from './TimeAxis';
-import { useScheduleStore } from '../../stores/scheduleStore';
-import { useContentStore } from '../../stores/contentStore';
-import { useDjStore } from '../../stores/djStore';
+import { useParams } from 'react-router-dom';
+import { useBlocks } from '../../hooks/useSchedules';
+import { useContent } from '../../hooks/useContent';
+import { useDjs } from '../../hooks/useDjs';
 import { snapCenterToCursor } from '@dnd-kit/modifiers'
 
 // Helper to get minutes from midnight in target timezone
@@ -30,13 +31,15 @@ interface ScheduleGridProps {
     activeId?: number | null;
     timezone?: string;
     readOnly?: boolean;
+    /** Live duration preview for the block being resized */
+    resizePreview?: { id: number; minutes: number } | null;
 }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 // Separate component for DayColumn to use hooks
 const DayColumn = ({
-    dayIndex, blocks, pixelsPerMinute, onBlockClick, getTopOffset, handleColumnClick, readOnly, isToday
+    dayIndex, blocks, pixelsPerMinute, onBlockClick, getTopOffset, handleColumnClick, readOnly, isToday, resizePreview
 }: {
     dayIndex: number;
     blocks: BlockData[];
@@ -46,6 +49,7 @@ const DayColumn = ({
     handleColumnClick: (e: React.MouseEvent, dayIndex: number) => void;
     readOnly?: boolean;
     isToday?: boolean;
+    resizePreview?: { id: number; minutes: number } | null;
 }) => {
     const { setNodeRef } = useDroppable({
         id: `day-${dayIndex}`,
@@ -79,6 +83,8 @@ const DayColumn = ({
                                         title: block.title || `Block ${block.id}`
                                     }}
                                     pixelsPerMinute={pixelsPerMinute}
+                                    readOnly={false}
+                                    previewMinutes={resizePreview && resizePreview.id === block.id ? resizePreview.minutes : null}
                                 />
                             ) : (
                                 <ScheduleBlock
@@ -103,7 +109,8 @@ export const ScheduleGrid = ({
     onBlockClick,
     activeId,
     timezone = 'UTC',
-    readOnly = false
+    readOnly = false,
+    resizePreview = null
 }: ScheduleGridProps) => {
     const [now, setNow] = React.useState(new Date());
 
@@ -112,9 +119,13 @@ export const ScheduleGrid = ({
         return () => clearInterval(interval);
     }, []);
 
-    const { blocks } = useScheduleStore();
-    const { content } = useContentStore();
-    const { djs } = useDjStore();
+    // The URL is the single source of truth for schedule selection.
+    const { id } = useParams();
+    const parsedScheduleId = id ? parseInt(id, 10) : NaN;
+    const scheduleId = Number.isNaN(parsedScheduleId) ? null : parsedScheduleId;
+    const { data: blocks = [] } = useBlocks(scheduleId);
+    const { data: content = [] } = useContent();
+    const { data: djs = [] } = useDjs();
 
     // Enrich blocks with content titles
     const enrichedBlocks = React.useMemo(() => {
@@ -246,6 +257,7 @@ export const ScheduleGrid = ({
                                 handleColumnClick={handleColumnClick}
                                 readOnly={readOnly}
                                 isToday={dayIndex === currentDayIndex}
+                                resizePreview={resizePreview}
                             />
                         ))}
 

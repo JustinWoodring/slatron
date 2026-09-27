@@ -1,5 +1,20 @@
-import { useEffect, useState } from 'react'
-import { useBumperStore, Bumper } from '../stores/bumperStore'
+import { useState } from 'react'
+import {
+    useBumpers,
+    useBumperBacks,
+    useCreateBumper,
+    useUpdateBumper,
+    useDeleteBumper,
+    useRenderBumper,
+    useRenderAllBumpers,
+    useDownloadBumperBack,
+    useUploadBumperBack,
+    useDeleteBumperBack,
+    useRenderBumperBack,
+    useRenderAllBumperBacks,
+    type Bumper
+} from '../hooks/useBumpers'
+import { isAxiosError } from 'axios'
 import { BumperEditor } from '../components/Bumpers/BumperEditor'
 import { format } from 'date-fns'
 import { AVAILABLE_BUMPER_BACKS } from '../constants/bumperAssets'
@@ -7,22 +22,18 @@ import { AVAILABLE_BUMPER_BACKS } from '../constants/bumperAssets'
 const BUMPER_TYPES = ['station_ident', 'transition', 'show_opener', 'lower_third', 'custom']
 
 export default function BumpersPage() {
-    const {
-        bumpers,
-        bumperBacks,
-        fetchBumpers,
-        fetchBumperBacks,
-        createBumper,
-        updateBumper,
-        deleteBumper,
-        renderBumper,
-        renderAllBumpers,
-        renderBumperBack,
-        renderAllBumperBacks,
-        downloadBumperBack,
-        uploadBumperBack,
-        deleteBumperBack
-    } = useBumperStore()
+    const { data: bumpers = [] } = useBumpers()
+    const { data: bumperBacks = [] } = useBumperBacks()
+    const createBumper = useCreateBumper()
+    const updateBumper = useUpdateBumper()
+    const deleteBumper = useDeleteBumper()
+    const renderBumperMutation = useRenderBumper()
+    const renderAllBumpersMutation = useRenderAllBumpers()
+    const downloadBumperBackMutation = useDownloadBumperBack()
+    const uploadBumperBackMutation = useUploadBumperBack()
+    const deleteBumperBackMutation = useDeleteBumperBack()
+    const renderBumperBackMutation = useRenderBumperBack()
+    const renderAllBumperBacksMutation = useRenderAllBumperBacks()
 
     const [activeTab, setActiveTab] = useState<'bumpers' | 'backgrounds'>('bumpers')
 
@@ -37,9 +48,6 @@ export default function BumpersPage() {
         bumper_back_id: null as number | null
     })
     const [dirty, setDirty] = useState(false)
-    const [renderingId, setRenderingId] = useState<number | null>(null)
-    const [renderingBackId, setRenderingBackId] = useState<number | null>(null)
-    const [renderingAll, setRenderingAll] = useState(false)
     const [filterType, setFilterType] = useState<string>('all')
     const [previewBumper, setPreviewBumper] = useState<Bumper | null>(null)
 
@@ -48,12 +56,7 @@ export default function BumpersPage() {
     const [backgroundTab, setBackgroundTab] = useState<'library' | 'upload'>('library')
     const [uploadFile, setUploadFile] = useState<File | null>(null)
     const [uploadName, setUploadName] = useState('')
-    const [processingBackground, setProcessingBackground] = useState<string | null>(null)
 
-    useEffect(() => {
-        fetchBumpers()
-        fetchBumperBacks()
-    }, [])
 
     const handleEdit = (bumper: Bumper) => {
         setSelectedBumper(bumper)
@@ -111,7 +114,7 @@ export default function BumpersPage() {
         try {
             const data = {
                 name: editorForm.name,
-                bumper_type: editorForm.bumper_type as any,
+                bumper_type: editorForm.bumper_type as Bumper['bumper_type'],
                 description: editorForm.description,
                 template_content: editorContent,
                 is_template: true,
@@ -119,21 +122,21 @@ export default function BumpersPage() {
                 bumper_back_id: editorForm.bumper_back_id || undefined
             }
 
-            let savedBumper: Bumper;
+            let savedBumper: Bumper
             if (selectedBumper?.id) {
-                savedBumper = await updateBumper(selectedBumper.id, data)
+                savedBumper = await updateBumper.mutateAsync({ id: selectedBumper.id, data })
             } else {
-                savedBumper = await createBumper(data)
+                savedBumper = await createBumper.mutateAsync(data)
             }
 
-            // Update local state to reflect saved status
+            // Query invalidation refreshes the list
             setDirty(false)
             setSelectedBumper(savedBumper)
-            fetchBumpers()
             return savedBumper.id
-        } catch (e: any) {
+        } catch (e) {
+            const message = e instanceof Error ? e.message : String(e)
             console.error(e)
-            alert('Failed to save bumper: ' + e.message)
+            alert('Failed to save bumper: ' + message)
             return null
         }
     }
@@ -167,7 +170,7 @@ export default function BumpersPage() {
     const handleDelete = async (id: number) => {
         if (!window.confirm('Are you sure you want to delete this bumper?')) return
         try {
-            await deleteBumper(id)
+            await deleteBumper.mutateAsync(id)
         } catch (e) {
             console.error(e)
             alert('Failed to delete bumper')
@@ -175,43 +178,43 @@ export default function BumpersPage() {
     }
 
     const handleDownloadBack = async (asset: typeof AVAILABLE_BUMPER_BACKS[0]) => {
-        setProcessingBackground(asset.url)
         try {
-            await downloadBumperBack(asset.url, asset.name)
+            await downloadBumperBackMutation.mutateAsync({ url: asset.url, name: asset.name })
             alert(`Downloaded ${asset.name}!`)
             setShowBackgroundModal(false)
-        } catch (e: any) {
-            alert(`Failed to download: ${e.message || 'Unknown error'}`)
-        } finally {
-            setProcessingBackground(null)
+        } catch (e) {
+            const message = e instanceof Error ? e.message : 'Unknown error'
+            alert(`Failed to download: ${message}`)
         }
     }
 
     const handleUploadBack = async () => {
         if (!uploadFile) return
-        setProcessingBackground('upload')
         try {
-            await uploadBumperBack(uploadFile, uploadName || uploadFile.name)
+            await uploadBumperBackMutation.mutateAsync({
+                file: uploadFile,
+                name: uploadName || uploadFile.name
+            })
             alert('Upload successful!')
             setShowBackgroundModal(false)
             setUploadFile(null)
             setUploadName('')
-        } catch (e: any) {
-            alert(`Failed to upload: ${e.message || 'Unknown error'}`)
-        } finally {
-            setProcessingBackground(null)
+        } catch (e) {
+            const message = e instanceof Error ? e.message : 'Unknown error'
+            alert(`Failed to upload: ${message}`)
         }
     }
 
     const handleDeleteBack = async (id: number) => {
         if (!window.confirm('Delete this background? Bumpers using it will fail to render.')) return
         try {
-            await deleteBumperBack(id)
-        } catch (e: any) {
-            if (e.response && e.response.status === 409) {
+            await deleteBumperBackMutation.mutateAsync(id)
+        } catch (e) {
+            if (isAxiosError(e) && e.response?.status === 409) {
                 alert('Cannot delete: This background is currently used by one or more bumpers.')
             } else {
-                alert('Failed to delete background: ' + (e.message || 'Unknown error'))
+                const message = e instanceof Error ? e.message : 'Unknown error'
+                alert('Failed to delete background: ' + message)
             }
         }
     }
@@ -219,8 +222,7 @@ export default function BumpersPage() {
     const handleRender = async (id: number, e: React.MouseEvent) => {
         e.stopPropagation()
         try {
-            setRenderingId(id)
-            const res = await renderBumper(id)
+            const res = await renderBumperMutation.mutateAsync(id)
 
             if (res.success) {
                 // Update selectedBumper with new render path to show preview immediately
@@ -234,25 +236,21 @@ export default function BumpersPage() {
             } else {
                 alert('Render failed: ' + (res.error || 'Unknown error'))
             }
-        } catch (e: any) {
-            console.error(e)
-            alert('Failed to render bumper: ' + (e.message || 'Network error'))
-        } finally {
-            setRenderingId(null)
+        } catch (e2) {
+            const message = e2 instanceof Error ? e2.message : 'Network error'
+            console.error(e2)
+            alert('Failed to render bumper: ' + message)
         }
     }
 
     const handleRenderAll = async () => {
         if (!window.confirm('Render all bumpers? This may take a while.')) return
         try {
-            setRenderingAll(true)
-            const res = await renderAllBumpers()
+            const res = await renderAllBumpersMutation.mutateAsync()
             alert(`Render complete. Success: ${res.successful}, Failed: ${res.failed}`)
         } catch (e) {
             console.error(e)
             alert('Failed to render all bumpers')
-        } finally {
-            setRenderingAll(false)
         }
     }
 
@@ -361,10 +359,10 @@ export default function BumpersPage() {
                                 <h3 className="font-bold text-white flex items-center gap-2">Preview & Render</h3>
                                 <button
                                     onClick={handleSaveAndRender}
-                                    disabled={!!renderingId || (dirty && !editorForm.name)}
+                                    disabled={renderBumperMutation.isPending || (dirty && !editorForm.name)}
                                     className="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                                 >
-                                    {renderingId === selectedBumper?.id ? 'Rendering...' : 'Save & Render Now'}
+                                    {renderBumperMutation.isPending && renderBumperMutation.variables === selectedBumper?.id ? 'Rendering...' : 'Save & Render Now'}
                                 </button>
                                 {selectedBumper?.rendered_path && (
                                     <div className="mt-2 rounded-lg overflow-hidden border border-[var(--border-color)] bg-black aspect-video">
@@ -426,7 +424,7 @@ export default function BumpersPage() {
                         </select>
                         <button
                             onClick={handleRenderAll}
-                            disabled={renderingAll}
+                            disabled={renderAllBumpersMutation.isPending}
                             className="btn-secondary"
                         >
                             Render All
@@ -458,7 +456,7 @@ export default function BumpersPage() {
                                             <td className="p-4"><span className="text-xs font-mono bg-[var(--bg-primary)] px-2 py-1 rounded">{bumper.bumper_type}</span></td>
                                             <td className="p-4 text-sm text-[var(--text-secondary)] truncate max-w-xs">{bumper.description}</td>
                                             <td className="p-4">
-                                                {renderingId === bumper.id ? <span className="text-purple-400">Rendering...</span> :
+                                                {renderBumperMutation.isPending && renderBumperMutation.variables === bumper.id ? <span className="text-purple-400">Rendering...</span> :
                                                     bumper.rendered_path ? <span className="text-emerald-400">Ready</span> :
                                                         <span className="text-amber-400">Needs Render</span>}
                                             </td>
@@ -519,20 +517,17 @@ export default function BumpersPage() {
                         </p>
                         <div className="flex gap-3">
                             <button
-                                onClick={async () => {
-                                    if (!window.confirm('Render all MLT backgrounds?')) return
-                                    try {
-                                        setRenderingAll(true)
-                                        const res = await renderAllBumperBacks()
-                                        alert(`Render complete. Success: ${res.successful}, Failed: ${res.failed}`)
-                                    } catch (e) {
-                                        console.error(e)
-                                        alert('Failed to render backgrounds')
-                                    } finally {
-                                        setRenderingAll(false)
-                                    }
-                                }}
-                                disabled={renderingAll}
+                                    onClick={async () => {
+                                        if (!window.confirm('Render all MLT backgrounds?')) return
+                                        try {
+                                            const res = await renderAllBumperBacksMutation.mutateAsync()
+                                            alert(`Render complete. Success: ${res.successful}, Failed: ${res.failed}`)
+                                        } catch (e) {
+                                            console.error(e)
+                                            alert('Failed to render backgrounds')
+                                        }
+                                    }}
+                                disabled={renderAllBumperBacksMutation.isPending}
                                 className="btn-secondary"
                             >
                                 Render All MLT
@@ -562,13 +557,10 @@ export default function BumpersPage() {
                                                 <button
                                                     onClick={async () => {
                                                         try {
-                                                            setRenderingBackId(back.id)
-                                                            await renderBumperBack(back.id)
+                                                            await renderBumperBackMutation.mutateAsync(back.id)
                                                         } catch (e) {
                                                             console.error(e)
                                                             alert('Failed to render background')
-                                                        } finally {
-                                                            setRenderingBackId(null)
                                                         }
                                                     }}
                                                     className="p-2 bg-purple-500/80 hover:bg-purple-500 text-white rounded-full"
@@ -587,7 +579,7 @@ export default function BumpersPage() {
                                             </button>
                                         </div>
                                         {/* Status Indicators */}
-                                        {renderingBackId === back.id && (
+                                        {renderBumperBackMutation.isPending && renderBumperBackMutation.variables === back.id && (
                                             <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center text-purple-400 text-xs font-medium">
                                                 <svg className="animate-spin h-6 w-6 mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -596,7 +588,7 @@ export default function BumpersPage() {
                                                 Rendering...
                                             </div>
                                         )}
-                                        {isMlt && !renderingBackId && (
+                                        {isMlt && !(renderBumperBackMutation.isPending && renderBumperBackMutation.variables === back.id) && (
                                             <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-black/60 text-[10px] font-mono border border-white/20 text-white">
                                                 MLT
                                             </div>
@@ -649,10 +641,10 @@ export default function BumpersPage() {
                                             <p className="text-xs text-[var(--text-secondary)] mb-2">{asset.description}</p>
                                             <button
                                                 onClick={() => handleDownloadBack(asset)}
-                                                disabled={!!processingBackground}
+                                                disabled={downloadBumperBackMutation.isPending || uploadBumperBackMutation.isPending}
                                                 className="w-full btn-secondary text-xs py-1"
                                             >
-                                                {processingBackground === asset.url ? 'Downloading...' : 'Download'}
+                                                {downloadBumperBackMutation.isPending && downloadBumperBackMutation.variables?.url === asset.url ? 'Downloading...' : 'Download'}
                                             </button>
                                         </div>
                                     ))}
@@ -696,10 +688,10 @@ export default function BumpersPage() {
                                             </div>
                                             <button
                                                 onClick={handleUploadBack}
-                                                disabled={!!processingBackground}
+                                                disabled={uploadBumperBackMutation.isPending}
                                                 className="btn-primary w-full"
                                             >
-                                                {processingBackground ? 'Uploading...' : 'Upload & Save'}
+                                                {uploadBumperBackMutation.isPending ? 'Uploading...' : 'Upload & Save'}
                                             </button>
                                         </>
                                     )}

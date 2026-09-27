@@ -9,6 +9,8 @@ pub struct Config {
     pub secret_key: String,
     pub heartbeat_interval_secs: u64,
     pub schedule_poll_interval_secs: u64,
+    #[serde(default = "default_screenshot_interval")]
+    pub screenshot_interval_secs: u64,
     pub mpv_socket_path: String,
     #[serde(default = "default_voice_socket")]
     pub voice_mpv_socket_path: String,
@@ -17,6 +19,10 @@ pub struct Config {
 
 fn default_voice_socket() -> String {
     "/tmp/mpv-socket-voice".to_string()
+}
+
+fn default_screenshot_interval() -> u64 {
+    10
 }
 
 impl Config {
@@ -32,6 +38,8 @@ server_url = "ws://127.0.0.1:8080/ws"
 secret_key = "change-me"
 heartbeat_interval_secs = 5
 schedule_poll_interval_secs = 60
+# How often (seconds) to capture a screenshot; minimum 5
+screenshot_interval_secs = 10
 mpv_socket_path = "/tmp/mpv-socket"
 voice_mpv_socket_path = "/tmp/mpv-socket-voice"
 offline_mode_warning_hours = 24

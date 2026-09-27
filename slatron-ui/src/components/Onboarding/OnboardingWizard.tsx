@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiClient } from '../../api/client';
-import { useDjStore } from '../../stores/djStore';
+import { useCreateAiProvider, useCreateDj } from '../../hooks/useDjs';
 
 interface GlobalSetting {
     key: string;
@@ -13,8 +13,9 @@ export default function OnboardingWizard() {
     const [step, setStep] = useState(1);
     const [settings, setSettings] = useState<GlobalSetting[]>([]);
 
-    // Store Actions
-    const { addAiProvider, addDj } = useDjStore();
+    // Mutation hooks
+    const createAiProviderMutation = useCreateAiProvider();
+    const createDjMutation = useCreateDj();
 
     // Form State
     const [stationName, setStationName] = useState("Slatron TV");
@@ -118,7 +119,7 @@ export default function OnboardingWizard() {
                     if (llmProvider === 'ollama') finalModel = 'llama3';
                 }
 
-                await addAiProvider({
+                await createAiProviderMutation.mutateAsync({
                     name: 'Primary LLM',
                     provider_category: 'llm',
                     provider_type: llmProvider,
@@ -137,7 +138,7 @@ export default function OnboardingWizard() {
                     finalTtsEndpoint = 'http://127.0.0.1:1234/v1/completions';
                 }
 
-                await addAiProvider({
+                await createAiProviderMutation.mutateAsync({
                     name: 'Primary TTS',
                     provider_category: 'tts',
                     provider_type: ttsProvider,
@@ -149,7 +150,7 @@ export default function OnboardingWizard() {
 
             // Create DJ
             if (!skipDj && djName) {
-                await addDj({
+                await createDjMutation.mutateAsync({
                     name: djName,
                     personality_prompt: "You are a professional yet witty radio host. Introduce tracks with style.",
                     voice_config_json: "{}",

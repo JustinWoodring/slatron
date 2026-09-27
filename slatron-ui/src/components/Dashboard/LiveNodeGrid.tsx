@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 
 interface Node {
@@ -21,6 +22,13 @@ interface LiveNodeGridProps {
 }
 
 export function LiveNodeGrid({ nodes, content }: LiveNodeGridProps) {
+    // Shared 5s tick used to cache-bust screenshot URLs
+    const [screenshotTick, setScreenshotTick] = useState(Date.now())
+    useEffect(() => {
+        const id = setInterval(() => setScreenshotTick(Date.now()), 5000)
+        return () => clearInterval(id)
+    }, [])
+
     const getStatusColor = (status: string) => {
         switch (status) {
             case 'online': return 'bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)]'
@@ -52,7 +60,8 @@ export function LiveNodeGrid({ nodes, content }: LiveNodeGridProps) {
                                 <>
                                     <div className="absolute inset-0 flex items-center justify-center bg-black">
                                         <img
-                                            src={`/screenshots/node_${node.id}.jpg?t=${node.last_heartbeat ? new Date(node.last_heartbeat).getTime() : Date.now()}`}
+                                            src={`/screenshots/node_${node.id}.jpg?t=${screenshotTick}`}
+                                            key={`/screenshots/node_${node.id}.jpg?t=${screenshotTick}`}
                                             alt={`Node ${node.id} Screen`}
                                             className="w-full h-full object-cover opacity-90"
                                             onError={(e) => {

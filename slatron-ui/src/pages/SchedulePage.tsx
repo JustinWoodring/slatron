@@ -1,11 +1,19 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { DndContext, useSensor, useSensors, PointerSensor, DragEndEvent, CollisionDetection, rectIntersection } from '@dnd-kit/core'
-import { useScheduleStore } from '../stores/scheduleStore'
-import { useContentStore } from '../stores/contentStore'
+import { useQueryClient } from '@tanstack/react-query'
+import { DndContext, useSensor, useSensors, PointerSensor, DragEndEvent, DragStartEvent, DragMoveEvent, CollisionDetection, rectIntersection } from '@dnd-kit/core'
+import {
+  useSchedules,
+  useBlocks,
+  useCreateBlock,
+  useUpdateBlock,
+  useUpdateSchedule,
+  useDeleteSchedule,
+  blocksQueryKey,
+} from '../hooks/useSchedules'
+import { blocksOverlap } from '../utils/scheduleOverlap'
 import { useAuthStore } from '../stores/authStore'
-import { useDjStore } from '../stores/djStore'
 import { ScheduleGrid } from '../components/ScheduleGrid/ScheduleGrid'
 import { BlockEditorPopover } from '../components/ScheduleGrid/BlockEditorPopover'
 import { OneOffScheduleList } from '../components/ScheduleGrid/OneOffScheduleList'
@@ -31,65 +39,76 @@ const fixCursorSnapOffset: CollisionDetection = (args) => {
   return rectIntersection(updated)
 }
 
+const RESIZE_ID_PREFIX = 'resize-'
+
+// Resize draggables use ids like `resize-42`; move draggables use the numeric
+// block id. Returns the block id for resize drags, null otherwise.
+const parseResizeId = (activeId: string | number): number | null => {
+  const id = String(activeId)
+  if (!id.startsWith(RESIZE_ID_PREFIX)) return null
+  const parsed = parseInt(id.slice(RESIZE_ID_PREFIX.length), 10)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+const timeToMinutes = (time: string): number => {
+  const [hours, minutes] = time.split(':').map(Number)
+  return hours * 60 + minutes
+}
+
+// dnd-kit's delta is cumulative from drag start: snap the vertical delta to
+// 15-minute steps and clamp to [15, midnight] relative to the block start.
+const computeResizedMinutes = (
+  startMinutes: number,
+  originalMinutes: number,
+  deltaYPx: number,
+  pixelsPerMinute: number
+): number => {
+  const snappedDelta = Math.round(deltaYPx / pixelsPerMinute / 15) * 15
+  return Math.max(15, Math.min(originalMinutes + snappedDelta, 24 * 60 - startMinutes))
+}
+
 export default function SchedulePage() {
   const { user } = useAuthStore()
   const isEditor = user?.role === 'admin' || user?.role === 'editor'
   const { id } = useParams()
   const navigate = useNavigate()
-  const { fetchSchedules, fetchBlocks, selectedScheduleId, createBlock, updateBlock, deleteSchedule, updateSchedule, setSelectedSchedule, schedules } = useScheduleStore()
-  const { fetchContent } = useContentStore()
-  const { fetchDjs } = useDjStore()
+  const queryClient = useQueryClient()
+
+  // The URL is the single source of truth for schedule selection.
+  const routeScheduleId = id ? parseInt(id, 10) : NaN
+  const selectedScheduleId = Number.isNaN(routeScheduleId) ? null : routeScheduleId
+
+  const { data: schedules = [] } = useSchedules()
+  const { data: blocks = [] } = useBlocks(selectedScheduleId)
+  // Mutations are unreachable while selectedScheduleId is null, so the
+  // fallback id 0 is never used in a request.
+  const createBlockMutation = useCreateBlock(selectedScheduleId ?? 0)
+  const updateBlockMutation = useUpdateBlock(selectedScheduleId ?? 0)
+  const updateScheduleMutation = useUpdateSchedule()
+  const deleteScheduleMutation = useDeleteSchedule()
   const [zoomLevel, setZoomLevel] = useState(2)
   const [selectedBlockId, setSelectedBlockId] = useState<number | null>(null)
+  const [resizePreview, setResizePreview] = useState<{ id: number; minutes: number } | null>(null)
   const [popoverPos, setPopoverPos] = useState<{ x: number, y: number } | null>(null)
   const [titleInputValue, setTitleInputValue] = useState('')
   const [timezone, setTimezone] = useState<string>('UTC')
 
-  // Fetch initial data
+  // Settings aren't covered by the schedule hooks; load timezone once.
   useEffect(() => {
-    Promise.all([
-      fetchSchedules(),
-      fetchContent(),
-      fetchDjs(),
-      fetchSettings()
-    ]).then(() => {
-      const currentSchedules = useScheduleStore.getState().schedules
+    fetchSettings()
+  }, [])
 
-      // If URL has ID, sync it
-      if (id) {
-        const scheduleId = parseInt(id)
-        if (!isNaN(scheduleId)) {
-          setSelectedSchedule(scheduleId)
-          fetchBlocks(scheduleId)
-          return
-        }
-      }
-
-      // Default to first schedule if none selected
-      if (currentSchedules.length > 0 && !useScheduleStore.getState().selectedScheduleId) {
-        const firstId = currentSchedules[0].id
-        navigate(`/schedules/${firstId}`, { replace: true })
-      }
-    })
-  }, []) // Run once on mount
-
-  // Watch URL changes
+  // Default to first schedule if the URL has no valid schedule id
   useEffect(() => {
-    if (id) {
-      const scheduleId = parseInt(id)
-      if (!isNaN(scheduleId)) {
-        if (scheduleId !== useScheduleStore.getState().selectedScheduleId) {
-          setSelectedSchedule(scheduleId)
-        }
-        fetchBlocks(scheduleId)
-      }
+    if (!selectedScheduleId && schedules.length > 0) {
+      navigate(`/schedules/${schedules[0].id}`, { replace: true })
     }
-  }, [id])
+  }, [selectedScheduleId, schedules, navigate])
 
   const fetchSettings = async () => {
     try {
       const { data } = await apiClient.get('/api/settings')
-      const tz = data.find((s: any) => s.key === 'timezone')?.value
+      const tz = data.find((s: { key: string }) => s.key === 'timezone')?.value
       if (tz) setTimezone(tz)
     } catch (e) {
       console.error("Failed to fetch settings", e)
@@ -112,7 +131,7 @@ export default function SchedulePage() {
     const schedule = schedules.find(s => s.id === selectedScheduleId)
     if (schedule && schedule.name !== titleInputValue) {
       try {
-        await updateSchedule(selectedScheduleId, { name: titleInputValue })
+        await updateScheduleMutation.mutateAsync({ id: selectedScheduleId, data: { name: titleInputValue } })
       } catch (e) {
         console.error("Failed to update schedule name", e)
         setTitleInputValue(schedule.name)
@@ -125,7 +144,7 @@ export default function SchedulePage() {
     if (!selectedScheduleId) return
     if (window.confirm('Are you sure you want to delete this schedule? This action cannot be undone.')) {
       try {
-        await deleteSchedule(selectedScheduleId)
+        await deleteScheduleMutation.mutateAsync(selectedScheduleId)
         navigate('/schedules')
       } catch (e) {
         console.error("Failed to delete schedule", e)
@@ -144,19 +163,85 @@ export default function SchedulePage() {
 
   const [activeId, setActiveId] = useState<number | null>(null)
 
-  const handleDragStart = (event: any) => {
+  const handleDragStart = (event: DragStartEvent) => {
     if (!isEditor) return
-    setActiveId(parseInt(event.active.id as string));
+    const resizeId = parseResizeId(event.active.id)
+    if (resizeId !== null) {
+      // No DragOverlay for resizes; seed the live duration preview instead.
+      const block = blocks.find(b => b.id === resizeId)
+      if (block) setResizePreview({ id: resizeId, minutes: block.duration_minutes })
+      return
+    }
+    setActiveId(parseInt(String(event.active.id), 10))
+  }
+
+  const handleDragMove = (event: DragMoveEvent) => {
+    const resizeId = parseResizeId(event.active.id)
+    if (resizeId === null) return
+    const block = blocks.find(b => b.id === resizeId)
+    if (!block) return
+    setResizePreview({
+      id: resizeId,
+      minutes: computeResizedMinutes(
+        timeToMinutes(block.start_time),
+        block.duration_minutes,
+        event.delta.y,
+        zoomLevel
+      ),
+    })
   }
 
   const handleDragEnd = async (event: DragEndEvent) => {
     if (!isEditor) return
     const { active } = event;
     setActiveId(null);
+    setResizePreview(null);
     if (!selectedScheduleId) return;
 
-    const blockId = parseInt(active.id as string);
-    const block = useScheduleStore.getState().blocks.find(b => b.id === blockId);
+    const resizeId = parseResizeId(active.id)
+    if (resizeId !== null) {
+      const block = blocks.find(b => b.id === resizeId);
+      if (!block) return;
+
+      const newDuration = computeResizedMinutes(
+        timeToMinutes(block.start_time),
+        block.duration_minutes,
+        event.delta.y,
+        zoomLevel
+      );
+      if (newDuration === block.duration_minutes) return;
+
+      const hasOverlap = blocksOverlap(
+        blocks,
+        Number(block.day_of_week),
+        null,
+        block.start_time,
+        newDuration,
+        block.id
+      );
+      if (hasOverlap) {
+        alert('Cannot resize: Overlaps with an existing block.');
+        return;
+      }
+
+      try {
+        await updateBlockMutation.mutateAsync({
+          blockId: resizeId,
+          data: {
+            ...block,
+            duration_minutes: newDuration,
+            schedule_id: Number(block.schedule_id),
+          },
+        });
+      } catch (e) {
+        console.error("Failed to resize block", e);
+        queryClient.invalidateQueries({ queryKey: blocksQueryKey(selectedScheduleId) });
+      }
+      return;
+    }
+
+    const blockId = parseInt(String(active.id), 10);
+    const block = blocks.find(b => b.id === blockId);
 
     if (block) {
       const gridContainer = document.getElementById('schedule-grid-container');
@@ -202,7 +287,8 @@ export default function SchedulePage() {
       const currentTime = block.start_time;
 
       if (newDayIndex !== currentDay || newTimeStr !== currentTime) {
-        const hasOverlap = useScheduleStore.getState().checkOverlap(
+        const hasOverlap = blocksOverlap(
+          blocks,
           newDayIndex,
           null,
           newTimeStr,
@@ -216,15 +302,18 @@ export default function SchedulePage() {
         }
 
         try {
-          await updateBlock(selectedScheduleId, blockId, {
-            ...block,
-            day_of_week: Number(newDayIndex),
-            start_time: newTimeStr,
-            schedule_id: Number(block.schedule_id),
+          await updateBlockMutation.mutateAsync({
+            blockId,
+            data: {
+              ...block,
+              day_of_week: Number(newDayIndex),
+              start_time: newTimeStr,
+              schedule_id: Number(block.schedule_id),
+            },
           });
-        } catch (e: any) {
+        } catch (e) {
           console.error("Failed to move block", e);
-          fetchBlocks(selectedScheduleId);
+          queryClient.invalidateQueries({ queryKey: blocksQueryKey(selectedScheduleId) });
         }
       }
     }
@@ -236,7 +325,8 @@ export default function SchedulePage() {
     setPopoverPos(pos);
 
     try {
-      const hasOverlap = useScheduleStore.getState().checkOverlap(
+      const hasOverlap = blocksOverlap(
+        blocks,
         dayIndex,
         null,
         startTime,
@@ -248,7 +338,7 @@ export default function SchedulePage() {
         return;
       }
 
-      const newBlock = await createBlock(selectedScheduleId, {
+      const newBlock = await createBlockMutation.mutateAsync({
         day_of_week: dayIndex,
         start_time: startTime,
         duration_minutes: 30,
@@ -342,7 +432,9 @@ export default function SchedulePage() {
               <DndContext
                 sensors={isEditor ? sensors : []}
                 onDragStart={handleDragStart}
+                onDragMove={handleDragMove}
                 onDragEnd={handleDragEnd}
+                onDragCancel={() => setResizePreview(null)}
                 collisionDetection={fixCursorSnapOffset}
               >
                 <ScheduleGrid
@@ -352,6 +444,7 @@ export default function SchedulePage() {
                   activeId={activeId}
                   timezone={timezone}
                   readOnly={!isEditor}
+                  resizePreview={resizePreview}
                 />
               </DndContext>
             </div>

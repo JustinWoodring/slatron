@@ -1,19 +1,17 @@
-import { useState, useEffect } from 'react'
-import { useDjStore } from '../stores/djStore'
+import { useState } from 'react'
+import { useDjs, useDeleteDj } from '../hooks/useDjs'
+import type { DjProfile } from '../api/dj'
 import CreateDjModal from '../components/Djs/CreateDjModal'
 import AiProviderList from '../components/Settings/AiProviderList'
 
 export default function DjsPage() {
-    const { djs, fetchDjs, removeDj, isLoading } = useDjStore()
+    const { data: djs = [], isLoading: djsLoading, refetch } = useDjs()
+    const deleteDjMutation = useDeleteDj()
     const [activeTab, setActiveTab] = useState<'djs' | 'ai'>('djs')
 
     // Modals
     const [isDjModalOpen, setIsDjModalOpen] = useState(false)
-    const [selectedDj, setSelectedDj] = useState<any>(null) // Using any for simplicity with imports, or proper type
-
-    useEffect(() => {
-        fetchDjs()
-    }, [])
+    const [selectedDj, setSelectedDj] = useState<DjProfile | null>(null)
 
     const handleCreateDj = () => {
         setSelectedDj(null)
@@ -21,7 +19,7 @@ export default function DjsPage() {
         setActiveTab('djs')
     }
 
-    const handleEditDj = (dj: any) => {
+    const handleEditDj = (dj: DjProfile) => {
         setSelectedDj(dj)
         setIsDjModalOpen(true)
     }
@@ -63,7 +61,7 @@ export default function DjsPage() {
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto custom-scrollbar">
-                {isLoading && djs.length === 0 ? (
+                {djsLoading && djs.length === 0 ? (
                     <div className="flex items-center justify-center h-64">
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
                     </div>
@@ -77,7 +75,7 @@ export default function DjsPage() {
                                             {dj.name.charAt(0).toUpperCase()}
                                         </div>
                                         <button
-                                            onClick={() => removeDj(dj.id)}
+                                            onClick={() => { void deleteDjMutation.mutateAsync(dj.id) }}
                                             className="text-[var(--text-secondary)] hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
                                         >
                                             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -120,8 +118,8 @@ export default function DjsPage() {
             <CreateDjModal
                 isOpen={isDjModalOpen}
                 onClose={() => setIsDjModalOpen(false)}
-                onDjAdded={fetchDjs}
-                initialDj={selectedDj}
+                onDjAdded={() => { refetch() }}
+                initialDj={selectedDj ?? undefined}
             />
         </div>
     )

@@ -16,8 +16,13 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { apiClient } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
-import { useScheduleStore } from '../stores/scheduleStore'
-import { useContentStore } from '../stores/contentStore'
+import {
+  useSchedules,
+  useNodeAssignedSchedules,
+  useUpdateNodeSchedules,
+  type NodeAssignedSchedule,
+} from '../hooks/useSchedules'
+import { useContent } from '../hooks/useContent'
 import { useAuthStore } from '../stores/authStore'
 import { RegisterNodeModal } from '../components/Nodes/RegisterNodeModal'
 import { NodeSettingsModal } from '../components/Nodes/NodeSettingsModal'
@@ -33,6 +38,12 @@ interface Node {
   current_content_id: number | null
   playback_position_secs: number | null
 }
+
+// The server returns full schedule objects for /api/nodes/:id/schedule; the
+// query type names only the core fields, so name the extra field the
+// assignment UI renders.
+type NodeScheduleAssignment = NodeAssignedSchedule & { schedule_type: string }
+
 interface SortableItemProps {
   id: string
   name: string
@@ -104,16 +115,33 @@ export default function NodesPage() {
   const [viewLogsModalOpen, setViewLogsModalOpen] = useState(false)
   const [nodeSchedule, setNodeSchedule] = useState<any>(null)
 
-  const { schedules, fetchSchedules, nodeAssignedSchedules, fetchNodeAssignedSchedules, updateNodeSchedules } = useScheduleStore()
-  const { content, fetchContent } = useContentStore()
+  const { data: schedules = [] } = useSchedules()
+  const { data: content = [] } = useContent()
+  const updateNodeSchedulesMutation = useUpdateNodeSchedules()
   const [selectedScheduleId, setSelectedScheduleId] = useState<string>('')
+
+  // Node whose assigned schedules are being edited in the assign modal.
+  const [manageNodeId, setManageNodeId] = useState<number | null>(null)
+  const { data: assignedSchedulesData } = useNodeAssignedSchedules(manageNodeId)
+
+  // Draft of the assigned schedule list: edited freely (add / remove /
+  // reorder) in the modal and only persisted on save.
+  const [draftSchedules, setDraftSchedules] = useState<NodeScheduleAssignment[]>([])
+  const [draftSeededFor, setDraftSeededFor] = useState<number | null>(null)
+
+  // Seed the draft once per modal open, as soon as the node's assignments
+  // are available.
+  useEffect(() => {
+    if (assignModalOpen && manageNodeId !== null && assignedSchedulesData && draftSeededFor !== manageNodeId) {
+      setDraftSchedules(assignedSchedulesData as NodeScheduleAssignment[])
+      setDraftSeededFor(manageNodeId)
+    }
+  }, [assignModalOpen, manageNodeId, assignedSchedulesData, draftSeededFor])
 
   const [timezone, setTimezone] = useState<string>('UTC')
 
   useEffect(() => {
     fetchNodes()
-    fetchSchedules()
-    fetchContent()
     fetchSettings()
     const interval = setInterval(fetchNodes, 5000)
     return () => clearInterval(interval)
@@ -170,21 +198,19 @@ export default function NodesPage() {
     })
   )
 
-  const handleManageSchedules = async (nodeId: number) => {
+  const handleManageSchedules = (nodeId: number) => {
     setSelectedNodeId(nodeId)
-    await fetchNodeAssignedSchedules(nodeId)
+    setManageNodeId(nodeId)
     setAssignModalOpen(true)
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (over && active.id !== over.id) {
-      useScheduleStore.setState((state) => {
-        const oldIndex = state.nodeAssignedSchedules.findIndex((item) => item.id.toString() === active.id)
-        const newIndex = state.nodeAssignedSchedules.findIndex((item) => item.id.toString() === over.id)
-        return {
-          nodeAssignedSchedules: arrayMove(state.nodeAssignedSchedules, oldIndex, newIndex)
-        }
+      setDraftSchedules((draft) => {
+        const oldIndex = draft.findIndex((item) => item.id.toString() === active.id)
+        const newIndex = draft.findIndex((item) => item.id.toString() === over.id)
+        return arrayMove(draft, oldIndex, newIndex)
       })
     }
   }
@@ -196,24 +222,25 @@ export default function NodesPage() {
       // Add to start (top) or end? User said "Top of list is more precedence"
       // If we add to bottom, it's lowest priority.
       // Let's add to top.
-      useScheduleStore.setState(state => ({
-        nodeAssignedSchedules: [scheduleToAdd, ...state.nodeAssignedSchedules]
-      }))
+      setDraftSchedules(draft => [scheduleToAdd, ...draft])
       setSelectedScheduleId('')
     }
   }
 
   const handleRemoveSchedule = (id: string) => {
-    useScheduleStore.setState(state => ({
-      nodeAssignedSchedules: state.nodeAssignedSchedules.filter(s => s.id.toString() !== id)
-    }))
+    setDraftSchedules(draft => draft.filter(s => s.id.toString() !== id))
+  }
+
+  const closeAssignModal = () => {
+    setAssignModalOpen(false)
+    setDraftSeededFor(null)
   }
 
   const handleSaveSchedules = async () => {
     if (selectedNodeId) {
-      const ids = nodeAssignedSchedules.map(s => s.id)
-      await updateNodeSchedules(selectedNodeId, ids)
-      setAssignModalOpen(false)
+      const ids = draftSchedules.map(s => s.id)
+      await updateNodeSchedulesMutation.mutateAsync({ nodeId: selectedNodeId, scheduleIds: ids })
+      closeAssignModal()
       fetchNodes() // refreshes status potentially
     }
   }
@@ -409,14 +436,14 @@ export default function NodesPage() {
               onDragEnd={handleDragEnd}
             >
               <SortableContext
-                items={nodeAssignedSchedules.map(s => s.id.toString())}
+                items={draftSchedules.map(s => s.id.toString())}
                 strategy={verticalListSortingStrategy}
               >
                 <div className="space-y-2 mb-6 max-h-[300px] overflow-y-auto pr-1">
-                  {nodeAssignedSchedules.length === 0 && (
+                  {draftSchedules.length === 0 && (
                     <p className="text-center text-[var(--text-secondary)] italic py-4">No schedules assigned.</p>
                   )}
-                  {nodeAssignedSchedules.map((schedule) => (
+                  {draftSchedules.map((schedule) => (
                     <SortableItem
                       key={schedule.id}
                       id={schedule.id.toString()}
@@ -438,7 +465,7 @@ export default function NodesPage() {
                 >
                   <option value="">Add Schedule...</option>
                   {schedules
-                    .filter(s => !nodeAssignedSchedules.find(as => as.id === s.id))
+                    .filter(s => !draftSchedules.find(as => as.id === s.id))
                     .map(s => (
                       <option key={s.id} value={s.id}>{s.name} ({s.schedule_type})</option>
                     ))}
@@ -454,7 +481,7 @@ export default function NodesPage() {
 
               <div className="flex gap-3">
                 <button
-                  onClick={() => setAssignModalOpen(false)}
+                  onClick={closeAssignModal}
                   className="flex-1 px-4 py-2 rounded-lg border border-[var(--border-color)] text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)] transition-colors"
                 >
                   Cancel

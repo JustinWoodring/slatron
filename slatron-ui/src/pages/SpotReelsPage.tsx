@@ -1,10 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useSpotReelStore, SpotReelListEntry } from '../stores/spotReelStore'
+import {
+  useSpotReels,
+  useCreateSpotReel,
+  useDeleteSpotReel,
+  SpotReelListEntry,
+} from '../hooks/useSpotReels'
 import { useAuthStore } from '../stores/authStore'
 
 export default function SpotReelsPage() {
-  const { reels, loading, fetchSpotReels, createSpotReel, deleteSpotReel } = useSpotReelStore()
+  const { data: reels = [], isLoading: loading } = useSpotReels()
+  const createReelMutation = useCreateSpotReel()
+  const deleteReelMutation = useDeleteSpotReel()
   const { user } = useAuthStore()
   const isEditor = user?.role === 'admin' || user?.role === 'editor'
   const navigate = useNavigate()
@@ -12,25 +19,21 @@ export default function SpotReelsPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newDescription, setNewDescription] = useState('')
-  const [creating, setCreating] = useState(false)
-
-  useEffect(() => {
-    fetchSpotReels()
-  }, [])
+  const creating = createReelMutation.isPending
 
   const handleCreate = async () => {
     if (!newTitle.trim()) return
-    setCreating(true)
     try {
-      const reel = await createSpotReel(newTitle.trim(), newDescription.trim() || undefined)
+      const reel = await createReelMutation.mutateAsync({
+        title: newTitle.trim(),
+        description: newDescription.trim() || undefined,
+      })
       setShowCreate(false)
       setNewTitle('')
       setNewDescription('')
       navigate(`/spot-reels/${reel.id}`)
     } catch (err) {
       console.error('Failed to create spot reel:', err)
-    } finally {
-      setCreating(false)
     }
   }
 
@@ -38,7 +41,7 @@ export default function SpotReelsPage() {
     e.stopPropagation()
     if (!confirm(`Delete "${reel.title}"? This will also remove the associated content item.`)) return
     try {
-      await deleteSpotReel(reel.id)
+      await deleteReelMutation.mutateAsync(reel.id)
     } catch (err) {
       console.error('Failed to delete spot reel:', err)
     }

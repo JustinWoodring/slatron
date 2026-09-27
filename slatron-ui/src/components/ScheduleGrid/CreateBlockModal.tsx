@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useContentStore } from '../../stores/contentStore'
+import { useContent } from '../../hooks/useContent'
 
 interface CreateBlockModalProps {
     isOpen: boolean
@@ -12,7 +12,7 @@ interface CreateBlockModalProps {
 }
 
 export function CreateBlockModal({ isOpen, onClose, onSubmit, initialData }: CreateBlockModalProps) {
-    const { content, fetchContent } = useContentStore()
+    const { data: content = [] } = useContent()
     const [formData, setFormData] = useState({
         day_of_week: 0,
         start_time: '09:00:00',
@@ -21,15 +21,12 @@ export function CreateBlockModal({ isOpen, onClose, onSubmit, initialData }: Cre
     })
 
     useEffect(() => {
-        if (isOpen) {
-            fetchContent()
-            if (initialData) {
-                setFormData(prev => ({
-                    ...prev,
-                    day_of_week: initialData.day_of_week ?? prev.day_of_week,
-                    start_time: initialData.start_time ?? prev.start_time
-                }))
-            }
+        if (isOpen && initialData) {
+            setFormData(prev => ({
+                ...prev,
+                day_of_week: initialData.day_of_week ?? prev.day_of_week,
+                start_time: initialData.start_time ?? prev.start_time
+            }))
         }
     }, [isOpen, initialData])
 

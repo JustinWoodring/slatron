@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { useContentStore } from '../../stores/contentStore'
-import { useScheduleStore } from '../../stores/scheduleStore'
+import { useParams } from 'react-router-dom'
+import { useBlocks, useUpdateBlock, useDeleteBlock } from '../../hooks/useSchedules'
+import { useContent } from '../../hooks/useContent'
 
 interface BlockEditorSidebarProps {
     blockId: number | null
@@ -8,10 +9,18 @@ interface BlockEditorSidebarProps {
 }
 
 export function BlockEditorSidebar({ blockId, onClose }: BlockEditorSidebarProps) {
-    const { blocks, updateBlock, deleteBlock, selectedScheduleId } = useScheduleStore()
-    const { content, fetchContent } = useContentStore()
+    // The URL is the single source of truth for schedule selection.
+    const { id } = useParams()
+    const parsedScheduleId = id ? parseInt(id, 10) : NaN
+    const scheduleId = Number.isNaN(parsedScheduleId) ? null : parsedScheduleId
+    const { data: blocks = [] } = useBlocks(scheduleId)
+    // Mutations are unreachable while scheduleId is null, so the fallback
+    // id 0 is never used in a request.
+    const updateBlockMutation = useUpdateBlock(scheduleId ?? 0)
+    const deleteBlockMutation = useDeleteBlock(scheduleId ?? 0)
+    const { data: content = [] } = useContent()
 
-    // Find the block from the store
+    // Find the block from the query
     const block = blocks.find(b => b.id === blockId)
 
     const [formData, setFormData] = useState({
@@ -20,10 +29,6 @@ export function BlockEditorSidebar({ blockId, onClose }: BlockEditorSidebarProps
         duration_minutes: 15,
         content_id: '' as string | number
     })
-
-    useEffect(() => {
-        fetchContent()
-    }, [])
 
     useEffect(() => {
         if (block) {
@@ -38,16 +43,19 @@ export function BlockEditorSidebar({ blockId, onClose }: BlockEditorSidebarProps
 
     const handleUpdate = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!block || !selectedScheduleId) return
+        if (!block || !scheduleId) return
 
         try {
             // Ensure time has seconds
             const startTime = formData.start_time.length === 5 ? formData.start_time + ':00' : formData.start_time
 
-            await updateBlock(selectedScheduleId, block.id, {
-                ...formData,
-                start_time: startTime,
-                content_id: formData.content_id ? Number(formData.content_id) : null
+            await updateBlockMutation.mutateAsync({
+                blockId: block.id,
+                data: {
+                    ...formData,
+                    start_time: startTime,
+                    content_id: formData.content_id ? Number(formData.content_id) : null
+                }
             })
             // Optional: visual feedback
         } catch (error) {
@@ -56,9 +64,9 @@ export function BlockEditorSidebar({ blockId, onClose }: BlockEditorSidebarProps
     }
 
     const handleDelete = async () => {
-        if (!block || !selectedScheduleId) return
+        if (!block || !scheduleId) return
         if (window.confirm("Are you sure you want to delete this block?")) {
-            await deleteBlock(selectedScheduleId, block.id)
+            await deleteBlockMutation.mutateAsync(block.id)
             onClose()
         }
     }

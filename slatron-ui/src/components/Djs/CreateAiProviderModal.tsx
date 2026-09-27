@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useDjStore } from '../../stores/djStore'
+import { useCreateAiProvider, useUpdateAiProvider } from '../../hooks/useDjs'
 import { AiProvider } from '../../api/dj'
 import { apiClient } from '../../api/client'
 
@@ -14,7 +14,8 @@ interface CreateAiProviderModalProps {
 }
 
 export default function CreateAiProviderModal({ isOpen, onClose, initialData }: CreateAiProviderModalProps) {
-    const { addAiProvider, updateAiProvider } = useDjStore()
+    const createAiProviderMutation = useCreateAiProvider()
+    const updateAiProviderMutation = useUpdateAiProvider()
     const [formData, setFormData] = useState({
         name: '',
         provider_category: 'llm', // 'llm' or 'tts'
@@ -84,9 +85,9 @@ export default function CreateAiProviderModal({ isOpen, onClose, initialData }: 
             }
 
             if (initialData) {
-                await updateAiProvider(initialData.id, payload)
+                await updateAiProviderMutation.mutateAsync({ id: initialData.id, data: payload })
             } else {
-                await addAiProvider(payload)
+                await createAiProviderMutation.mutateAsync(payload)
             }
             onClose()
         } catch (e) {
@@ -161,7 +162,6 @@ export default function CreateAiProviderModal({ isOpen, onClose, initialData }: 
                                                 Orpheus (Local) {!capabilities?.orpheus_enabled && '(Requires ML Feature)'}
                                             </option>
                                             <option value="gemini-tts">Google Gemini (TTS)</option>
-                                            <option value="elevenlabs" disabled>ElevenLabs (Coming Soon)</option>
                                         </>
                                     )}
                                 </select>

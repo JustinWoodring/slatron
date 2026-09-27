@@ -1,5 +1,5 @@
 import { useMemo, useEffect, useRef } from 'react'
-import { useDjStore } from '../../stores/djStore'
+import { useDjs } from '../../hooks/useDjs'
 
 interface ScheduleBlock {
     id: number
@@ -32,7 +32,7 @@ interface EffectiveScheduleViewerProps {
 
 export function EffectiveScheduleViewer({ data, timezone, onClose }: EffectiveScheduleViewerProps) {
     const scrollRef = useRef<HTMLDivElement>(null)
-    const { djs } = useDjStore();
+    const { data: djs = [] } = useDjs();
 
     // Helper: Convert UTC time string to target timezone time string (HH:MM)
     const formatTime = (timeStr: string, dateStr?: string) => {

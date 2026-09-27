@@ -1,19 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useScheduleStore } from '../stores/scheduleStore'
+import { useSchedules } from '../hooks/useSchedules'
 import { useAuthStore } from '../stores/authStore'
 import { CreateScheduleModal } from '../components/Schedules/CreateScheduleModal'
 
 export default function SchedulesListPage() {
     const { user } = useAuthStore()
     const isEditor = user?.role === 'admin' || user?.role === 'editor'
-    const { schedules, fetchSchedules } = useScheduleStore()
+    const { data: schedules = [] } = useSchedules()
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
     const navigate = useNavigate()
-
-    useEffect(() => {
-        fetchSchedules()
-    }, [])
 
     return (
         <div className="h-full flex flex-col gap-6 p-6">
