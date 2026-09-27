@@ -1,15 +1,20 @@
-use crate::models::{NewPermission, Permission};
+use crate::auth::permissions::RESOURCE_TYPES;
+use crate::models::{NewPermission, Permission, User};
 use crate::AppState;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    Json,
+    Extension, Json,
 };
 use diesel::prelude::*;
 
 pub async fn list_permissions(
     State(state): State<AppState>,
+    Extension(user): Extension<User>,
 ) -> Result<Json<Vec<Permission>>, StatusCode> {
+    if !user.is_admin() {
+        return Err(StatusCode::FORBIDDEN);
+    }
     use crate::schema::permissions::dsl::*;
 
     let mut conn = state
@@ -27,8 +32,21 @@ pub async fn list_permissions(
 
 pub async fn create_permission(
     State(state): State<AppState>,
+    Extension(user): Extension<User>,
     Json(new_perm): Json<NewPermission>,
 ) -> Result<Json<Permission>, StatusCode> {
+    if !user.is_admin() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if !RESOURCE_TYPES.contains(&new_perm.resource_type.as_str()) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if !matches!(
+        new_perm.permission_level.as_str(),
+        "read" | "write" | "admin"
+    ) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     use crate::schema::permissions;
 
     let mut conn = state
@@ -47,8 +65,12 @@ pub async fn create_permission(
 
 pub async fn delete_permission(
     State(state): State<AppState>,
+    Extension(user): Extension<User>,
     Path(perm_id): Path<i32>,
 ) -> Result<StatusCode, StatusCode> {
+    if !user.is_admin() {
+        return Err(StatusCode::FORBIDDEN);
+    }
     use crate::schema::permissions::dsl::*;
 
     let mut conn = state

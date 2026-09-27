@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { apiClient } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
+import PermissionsModal from '../components/Users/PermissionsModal'
 
 interface User {
   id: number
@@ -15,6 +16,7 @@ export default function UsersPage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create')
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
+  const [permissionsUser, setPermissionsUser] = useState<User | null>(null)
   const [formData, setFormData] = useState({ username: '', password: '', role: 'viewer' })
   const [error, setError] = useState<string | null>(null)
 
@@ -144,6 +146,12 @@ export default function UsersPage() {
                       </div>
                       <div className="ml-4 flex gap-2">
                         <button
+                          onClick={() => setPermissionsUser(user)}
+                          className="text-emerald-400 hover:text-emerald-300 px-3 py-1 rounded border border-emerald-400 transition-colors"
+                        >
+                          Permissions
+                        </button>
+                        <button
                           onClick={() => handleEdit(user)}
                           className="text-indigo-400 hover:text-indigo-300 px-3 py-1 rounded border border-indigo-400 transition-colors"
                         >
@@ -233,6 +241,13 @@ export default function UsersPage() {
             </form>
           </div>
         </div>
+      )}
+
+      {permissionsUser && (
+        <PermissionsModal
+          user={{ id: permissionsUser.id, username: permissionsUser.username }}
+          onClose={() => setPermissionsUser(null)}
+        />
       )}
     </div>
   )

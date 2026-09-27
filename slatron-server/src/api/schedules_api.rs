@@ -1,3 +1,4 @@
+use crate::auth::permissions::{Action, Grants, RES_NODE, RES_SCHEDULE, WILDCARD_ID};
 use crate::models::{NewSchedule, NewScheduleBlock, Schedule, ScheduleBlock, UpdateSchedule, User};
 use crate::AppState;
 use axum::{
@@ -35,6 +36,7 @@ pub struct CollapsedBlock {
 
 pub async fn list_schedules(
     State(state): State<AppState>,
+    Extension(user): Extension<User>,
 ) -> Result<Json<Vec<Schedule>>, StatusCode> {
     use crate::schema::schedules::dsl::*;
 
@@ -43,10 +45,17 @@ pub async fn list_schedules(
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let results = schedules
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut results = schedules
         .select(Schedule::as_select())
         .load(&mut conn)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Some(ids) = grants.visible_ids(&user.role, RES_SCHEDULE) {
+        results.retain(|s| s.id.map(|sid| ids.contains(&sid)).unwrap_or(false));
+    }
 
     Ok(Json(results))
 }
@@ -56,15 +65,16 @@ pub async fn create_schedule(
     Extension(user): Extension<User>,
     Json(new_schedule): Json<NewSchedule>,
 ) -> Result<Json<Schedule>, StatusCode> {
-    if !user.is_editor() {
-        return Err(StatusCode::FORBIDDEN);
-    }
     use crate::schema::schedules;
 
     let mut conn = state
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Write, RES_SCHEDULE, WILDCARD_ID)?;
 
     let schedule = diesel::insert_into(schedules::table)
         .values(&new_schedule)
@@ -81,9 +91,6 @@ pub async fn update_schedule(
     Path(schedule_id): Path<i32>,
     Json(updates): Json<UpdateSchedule>,
 ) -> Result<Json<Schedule>, StatusCode> {
-    if !user.is_editor() {
-        return Err(StatusCode::FORBIDDEN);
-    }
     use crate::schema::node_schedules;
     use crate::schema::schedules::dsl::*;
 
@@ -91,6 +98,10 @@ pub async fn update_schedule(
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Write, RES_SCHEDULE, schedule_id)?;
 
     // Enforce activation logic: A schedule cannot be active if it isn't assigned to a node.
     if let Some(true) = updates.is_active {
@@ -119,15 +130,16 @@ pub async fn delete_schedule(
     Extension(user): Extension<User>,
     Path(schedule_id): Path<i32>,
 ) -> Result<StatusCode, StatusCode> {
-    if !user.is_editor() {
-        return Err(StatusCode::FORBIDDEN);
-    }
     use crate::schema::schedules::dsl::*;
 
     let mut conn = state
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Write, RES_SCHEDULE, schedule_id)?;
 
     diesel::delete(schedules.filter(id.eq(schedule_id)))
         .execute(&mut conn)
@@ -138,6 +150,7 @@ pub async fn delete_schedule(
 
 pub async fn get_schedule_blocks(
     State(state): State<AppState>,
+    Extension(user): Extension<User>,
     Path(schedule_id): Path<i32>,
 ) -> Result<Json<Vec<ScheduleBlock>>, StatusCode> {
     use crate::schema::schedule_blocks::dsl;
@@ -146,6 +159,10 @@ pub async fn get_schedule_blocks(
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Read, RES_SCHEDULE, schedule_id)?;
 
     let blocks = dsl::schedule_blocks
         .filter(dsl::schedule_id.eq(schedule_id))
@@ -211,18 +228,21 @@ fn check_overlap(
 pub async fn create_schedule_block(
     State(state): State<AppState>,
     Extension(user): Extension<User>,
-    Path(_s_id): Path<i32>,
+    Path(_schedule_id): Path<i32>,
     Json(new_block): Json<NewScheduleBlock>,
 ) -> Result<Json<ScheduleBlock>, StatusCode> {
-    if !user.is_editor() {
-        return Err(StatusCode::FORBIDDEN);
-    }
     use crate::schema::schedule_blocks;
 
     let mut conn = state
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // The block is inserted under the body's schedule_id — that is the write
+    // target, so authorize against it (not the URL path id).
+    grants.ensure(&user.role, Action::Write, RES_SCHEDULE, new_block.schedule_id)?;
 
     // Validate duration and end of day
     if new_block.duration_minutes <= 0 {
@@ -267,15 +287,22 @@ pub async fn update_schedule_block(
     Path((_schedule_id, block_id)): Path<(i32, i32)>,
     Json(updates): Json<NewScheduleBlock>,
 ) -> Result<Json<ScheduleBlock>, StatusCode> {
-    if !user.is_editor() {
-        return Err(StatusCode::FORBIDDEN);
-    }
     use crate::schema::schedule_blocks::dsl::*;
 
     let mut conn = state
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Authorize against the block's existing parent schedule.
+    let existing = schedule_blocks
+        .filter(id.eq(block_id))
+        .select(ScheduleBlock::as_select())
+        .first::<ScheduleBlock>(&mut conn)
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Write, RES_SCHEDULE, existing.schedule_id)?;
 
     // Validate duration and end of day
     if updates.duration_minutes <= 0 {
@@ -327,15 +354,21 @@ pub async fn delete_schedule_block(
     Extension(user): Extension<User>,
     Path((_schedule_id, block_id)): Path<(i32, i32)>,
 ) -> Result<StatusCode, StatusCode> {
-    if !user.is_editor() {
-        return Err(StatusCode::FORBIDDEN);
-    }
     use crate::schema::schedule_blocks::dsl::*;
 
     let mut conn = state
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let existing = schedule_blocks
+        .filter(id.eq(block_id))
+        .select(ScheduleBlock::as_select())
+        .first::<ScheduleBlock>(&mut conn)
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Write, RES_SCHEDULE, existing.schedule_id)?;
 
     diesel::delete(schedule_blocks.filter(id.eq(block_id)))
         .execute(&mut conn)
@@ -346,6 +379,7 @@ pub async fn delete_schedule_block(
 
 pub async fn get_collapsed_schedule(
     State(state): State<AppState>,
+    Extension(user): Extension<User>,
     Query(params): Query<CollapsedScheduleQuery>,
 ) -> Result<Json<CollapsedScheduleResponse>, StatusCode> {
     use crate::services::schedule_service;
@@ -354,6 +388,10 @@ pub async fn get_collapsed_schedule(
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Read, RES_NODE, params.node_id)?;
 
     let blocks = schedule_service::calculate_collapsed_schedule(
         &mut conn,

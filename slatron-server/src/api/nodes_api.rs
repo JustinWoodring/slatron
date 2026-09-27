@@ -1,3 +1,4 @@
+use crate::auth::permissions::{Action, Grants, RES_NODE, RES_SCHEDULE, WILDCARD_ID};
 use crate::models::{NewNode, Node, User};
 use crate::AppState;
 use axum::{
@@ -50,7 +51,10 @@ pub struct NodeScheduleResponse {
     pub scripts: Vec<crate::models::Script>,
 }
 
-pub async fn list_nodes(State(state): State<AppState>) -> Result<Json<Vec<Node>>, StatusCode> {
+pub async fn list_nodes(
+    State(state): State<AppState>,
+    Extension(user): Extension<User>,
+) -> Result<Json<Vec<Node>>, StatusCode> {
     use crate::schema::nodes::dsl::*;
 
     let mut conn = state
@@ -58,10 +62,17 @@ pub async fn list_nodes(State(state): State<AppState>) -> Result<Json<Vec<Node>>
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let results = nodes
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut results = nodes
         .select(Node::as_select())
         .load(&mut conn)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Some(ids) = grants.visible_ids(&user.role, RES_NODE) {
+        results.retain(|n| n.id.map(|nid| ids.contains(&nid)).unwrap_or(false));
+    }
 
     Ok(Json(results))
 }
@@ -71,15 +82,16 @@ pub async fn create_node(
     Extension(user): Extension<User>,
     Json(req): Json<CreateNodeRequest>,
 ) -> Result<Json<CreateNodeResponse>, StatusCode> {
-    if !user.is_editor() {
-        return Err(StatusCode::FORBIDDEN);
-    }
     use crate::schema::nodes;
 
     let mut conn = state
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Write, RES_NODE, WILDCARD_ID)?;
 
     // Generate a secret key for the node
     let secret_key = Uuid::new_v4().to_string();
@@ -110,15 +122,16 @@ pub async fn delete_node(
     Extension(user): Extension<User>,
     Path(node_id): Path<i32>,
 ) -> Result<StatusCode, StatusCode> {
-    if !user.is_editor() {
-        return Err(StatusCode::FORBIDDEN);
-    }
     use crate::schema::nodes::dsl::*;
 
     let mut conn = state
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Write, RES_NODE, node_id)?;
 
     diesel::delete(nodes.filter(id.eq(node_id)))
         .execute(&mut conn)
@@ -133,15 +146,16 @@ pub async fn update_node(
     Path(node_id): Path<i32>,
     Json(req): Json<UpdateNodeRequest>,
 ) -> Result<Json<Node>, StatusCode> {
-    if !user.is_editor() {
-        return Err(StatusCode::FORBIDDEN);
-    }
     use crate::schema::nodes::dsl::*;
 
     let mut conn = state
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Write, RES_NODE, node_id)?;
 
     let target = diesel::update(nodes.filter(id.eq(node_id)));
 
@@ -166,12 +180,18 @@ pub async fn update_node(
 pub async fn send_command(
     State(_state): State<AppState>,
     Extension(user): Extension<User>,
-    Path(_node_id): Path<i32>,
+    Path(node_id): Path<i32>,
     Json(_command): Json<NodeCommand>,
 ) -> Result<StatusCode, StatusCode> {
-    if !user.is_editor() {
-        return Err(StatusCode::FORBIDDEN);
-    }
+    let mut conn = _state
+        .db
+        .get()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Write, RES_NODE, node_id)?;
+
     // This will send commands via WebSocket to the node
     // Implementation will be in the WebSocket module
     // For now, just acknowledge the command
@@ -189,15 +209,21 @@ pub async fn update_node_schedules(
     Path(path_node_id): Path<i32>,
     Json(req): Json<UpdateNodeSchedulesRequest>,
 ) -> Result<StatusCode, StatusCode> {
-    if !user.is_editor() {
-        return Err(StatusCode::FORBIDDEN);
-    }
     use crate::schema::node_schedules::dsl::*;
 
     let mut conn = state
         .db
         .get()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Write, RES_NODE, path_node_id)?;
+    // Assigning a schedule exposes its blocks via the node's collapsed view,
+    // so the caller must also be able to read each schedule.
+    for s_id in &req.schedule_ids {
+        grants.ensure(&user.role, Action::Read, RES_SCHEDULE, *s_id)?;
+    }
 
     conn.transaction::<_, diesel::result::Error, _>(|conn| {
         // 1. Delete all existing schedules for this node
@@ -437,8 +463,18 @@ pub async fn get_node_schedule(
 
 pub async fn get_node_logs(
     State(state): State<AppState>,
+    Extension(user): Extension<User>,
     Path(query_node_id): Path<i32>,
 ) -> Result<Json<Vec<crate::models::LogEntry>>, StatusCode> {
+    let mut conn = state
+        .db
+        .get()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let grants = Grants::for_user(&mut conn, &user)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    grants.ensure(&user.role, Action::Read, RES_NODE, query_node_id)?;
+
     let logs_map = state.node_logs.read().await;
 
     if let Some(queue) = logs_map.get(&query_node_id) {

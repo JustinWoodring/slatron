@@ -1,5 +1,6 @@
 pub mod jwt;
 pub mod middleware;
+pub mod permissions;
 
 use crate::db::DbConnection;
 use crate::models::User;
