@@ -1,6 +1,7 @@
 # Rust
 target/
-Cargo.lock
+# Cargo.lock is committed: both crates are binaries and unpinned builds
+# re-resolve prerelease deps (e.g. ort 2.0 rcs) into breaking versions.
 **/*.rs.bk
 *.pdb
 

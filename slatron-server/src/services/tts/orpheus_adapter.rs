@@ -92,6 +92,13 @@ impl TtsProvider for OrpheusTtsAdapter {
             use hound;
             use ort::session::{builder::GraphOptimizationLevel, Session};
 
+            // ort 2.0 rc error types can carry non-Sync builder payloads
+            // (e.g. Error<SessionBuilder>), which cannot convert into
+            // anyhow::Error via `?`. Capture them through Display instead.
+            fn ort_err<E: std::fmt::Display>(e: E) -> anyhow::Error {
+                anyhow::anyhow!("onnx runtime error: {e}")
+            }
+
             // Use extracted model path
             let decoder_path_str = "data/snac.onnx";
             if !std::path::Path::new(decoder_path_str).exists() {
@@ -210,24 +217,31 @@ impl TtsProvider for OrpheusTtsAdapter {
             }
 
             // Create inputs using (shape, data) tuple to avoid ndarray version issues
-            let v0 = ort::value::Value::from_array(([1, c0_vec.len()], c0_vec))?;
-            let v1 = ort::value::Value::from_array(([1, c1_vec.len()], c1_vec))?;
-            let v2 = ort::value::Value::from_array(([1, c2_vec.len()], c2_vec))?;
+            let v0 = ort::value::Value::from_array(([1, c0_vec.len()], c0_vec)).map_err(ort_err)?;
+            let v1 = ort::value::Value::from_array(([1, c1_vec.len()], c1_vec)).map_err(ort_err)?;
+            let v2 = ort::value::Value::from_array(([1, c2_vec.len()], c2_vec)).map_err(ort_err)?;
 
             tracing::info!("Loading SNAC ONNX model from: {}", decoder_path);
-            let mut session = Session::builder()?
-                .with_optimization_level(GraphOptimizationLevel::Level3)?
-                .with_intra_threads(4)?
-                .commit_from_file(decoder_path)?;
+            let mut session = Session::builder()
+                .map_err(ort_err)?
+                .with_optimization_level(GraphOptimizationLevel::Level3)
+                .map_err(ort_err)?
+                .with_intra_threads(4)
+                .map_err(ort_err)?
+                .commit_from_file(decoder_path)
+                .map_err(ort_err)?;
 
-            let outputs = session.run(ort::inputs![
-                "codes_0" => v0,
-                "codes_1" => v1,
-                "codes_2" => v2
-            ])?;
+            let outputs = session
+                .run(ort::inputs![
+                    "codes_0" => v0,
+                    "codes_1" => v1,
+                    "codes_2" => v2
+                ])
+                .map_err(ort_err)?;
 
-            let audio_output = outputs["audio"].try_extract_tensor::<f32>()?;
-            let (_, audio_data) = audio_output;
+            let (audio_shape, audio_data) =
+                outputs["audio"].try_extract_tensor::<f32>().map_err(ort_err)?;
+            let _ = audio_shape;
 
             let audio_i16: Vec<i16> = audio_data
                 .iter()

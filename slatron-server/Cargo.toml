@@ -45,7 +45,10 @@ dialoguer = "0.12.0"
 console = "0.16.1"
 reqwest = { version = "0.11", features = ["json", "blocking", "stream"] }
 rand = "0.8.5"
-ort = { version = "2.0.0-rc.4", features = ["download-binaries", "ndarray"], optional = true }
+# Pinned exactly: ort 2.0 release candidates are API-unstable and the
+# caret range silently drifts the lockfile to newer rcs with breaking
+# error-type changes (Cargo.lock is committed to prevent this).
+ort = { version = "=2.0.0-rc.13", features = ["download-binaries", "ndarray"], optional = true }
 ndarray = { version = "0.16", optional = true }
 hound = { version = "3.5", optional = true }
 quick-xml = { version = "0.36.1", features = ["serialize"] }
